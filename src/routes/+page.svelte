@@ -167,6 +167,7 @@
   }
 
   let adjusted = $derived(state.hardware_offset_pct !== 0 || state.overlay_offset_pct !== 0 || state.temperature_offset_k !== 0);
+  let temperaturePercent = $derived(((Number(temperature) - 1800) / 8200) * 100);
   let statusLine = $derived(
     state.effects_off ? "Effects are off" :
     state.app_bypassed ? "Paused for this application" :
@@ -178,18 +179,15 @@
 <svelte:head><title>Lum quick controls</title></svelte:head>
 
 <main class="panel" class:loading={!loaded}>
-  <header class="topbar">
-    <section class="mode-row">
-      <div><strong>Automatic</strong><span>{state.automatic ? "Following sun schedule" : "Appearance held"}</span></div>
-      <button type="button" class="switch" class:on={state.automatic} role="switch" aria-checked={state.automatic} aria-label="Follow sun schedule automatically" onclick={toggleAutomatic}><span></span></button>
-    </section>
-    <button class="icon-button" type="button" aria-label="Open settings" title="Settings" onclick={openSettings}>⚙</button>
-  </header>
+  <div class="solar-strip" aria-label={`Sunrise ${state.sunrise}, sunset ${state.sunset}`}>
+    <span class="sunrise"><i>↑</i><small>Sunrise</small><strong>{state.sunrise}</strong></span>
+    <span class="sunset"><small>Sunset</small><strong>{state.sunset}</strong><i>↓</i></span>
+  </div>
 
   <section class="hero" aria-live="polite">
-    <div class="orb" class:night={state.intensity > 0.45}><span></span><b>Lum</b></div>
+    <div class="orb" class:night={state.intensity > 0.45}><span></span></div>
     <div>
-      <h1>{state.effects_off ? "Neutral display" : `${titleCase(state.phase)} light`}</h1>
+      <h1>Lum</h1>
       <p>{statusLine}</p>
     </div>
   </section>
@@ -197,19 +195,19 @@
   <section class="controls" aria-label="Temporary display adjustments">
     <label>
       <span class="label-row"><span>Monitor</span><output>{hardwareBrightness}%</output></span>
-      <input aria-label="Temporary monitor brightness" type="range" min="0" max="100" step="1" bind:value={hardwareBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+      <input style={`--value:${hardwareBrightness}%`} aria-label="Temporary monitor brightness" type="range" min="0" max="100" step="1" bind:value={hardwareBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
     </label>
     <label>
       <span class="label-row"><span>Gamma</span><output>{overlayBrightness}%</output></span>
-      <input class="overlay" aria-label="Temporary gamma brightness" type="range" min="5" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+      <input style={`--value:${overlayBrightness}%`} class="overlay" aria-label="Temporary gamma brightness" type="range" min="5" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
     </label>
     <label>
       <span class="label-row"><span>Warmth</span><output>{temperature}K</output></span>
-      <input class="warmth" aria-label="Temporary color temperature" type="range" min="1800" max="10000" step="100" bind:value={temperature} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+      <input style={`--value:${temperaturePercent}%`} class="warmth" aria-label="Temporary color temperature" type="range" min="1800" max="10000" step="100" bind:value={temperature} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
     </label>
   </section>
 
-  <footer>
+  <section class="adjustment-state" aria-live="polite">
     {#if adjusted}
       <div class="adjustment-note">
         <span>Adjusted until {state.adjustment_expires_at ?? state.next_transition_time}</span>
@@ -217,10 +215,17 @@
       </div>
     {:else if !state.automatic}
       <button type="button" class="reset-wide" onclick={resetSchedule}>Return to schedule</button>
-    {:else}
-      <div class="solar"><span>↑ {state.sunrise}</span><span>↓ {state.sunset}</span></div>
     {/if}
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
+  </section>
+
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+
+  <footer class="bottom-bar">
+    <section class="mode-row">
+      <div><strong>Automatic</strong><span>{state.automatic ? "Following sun schedule" : "Appearance held"}</span></div>
+      <button type="button" class="switch" class:on={state.automatic} role="switch" aria-checked={state.automatic} aria-label="Follow sun schedule automatically" onclick={toggleAutomatic}><span></span></button>
+    </section>
+    <button class="icon-button" type="button" aria-label="Open settings" title="Settings" onclick={openSettings}>⚙</button>
   </footer>
 </main>
 
@@ -229,40 +234,50 @@
   :global(html) { color-scheme: dark; background: transparent; }
   :global(body) { margin: 0; padding: 10px; overflow: hidden; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; background: transparent; color: #f5f6fa; }
   :global(button), :global(input) { font: inherit; }
-  .panel { height: calc(100vh - 20px); padding: 12px 15px 10px; border: 1px solid rgba(255,255,255,.14); border-radius: 16px; background: linear-gradient(155deg, rgba(35,37,48,.97), rgba(24,25,33,.975)); box-shadow: 0 6px 16px rgba(0,0,0,.3); transition: opacity .15s ease; }
+  .panel { position:relative;display:flex;flex-direction:column;height:calc(100vh - 20px);padding:11px 15px 10px;border:1px solid rgba(255,255,255,.14);border-radius:16px;background:linear-gradient(155deg,rgba(35,37,48,.97),rgba(24,25,33,.975));box-shadow:0 6px 16px rgba(0,0,0,.3);transition:opacity .15s ease }
   .panel.loading { opacity: .72; }
-  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   button { border: 0; cursor: pointer; color: inherit; }
-  .icon-button { display: grid; place-items: center; width: 44px; height: 40px; flex:0 0 auto; margin: -2px -2px 0 0; border: 1px solid rgba(121,168,255,.22); border-radius: 11px; background: rgba(121,168,255,.11); color: #e5edff; font-size: 24px; line-height: 1; box-shadow:inset 0 1px rgba(255,255,255,.06); }
+  .solar-strip{display:flex;align-items:center;justify-content:space-between;padding:0 2px 8px;border-bottom:1px solid rgba(255,255,255,.07);font-variant-numeric:tabular-nums}
+  .solar-strip span{display:flex;align-items:center;gap:5px;font-size:11px}
+  .solar-strip small{color:#8d93a2;font-size:9.5px}
+  .solar-strip strong{font-size:11px;font-weight:650}
+  .solar-strip i{font-size:14px;font-style:normal;line-height:1}
+  .solar-strip .sunrise i,.solar-strip .sunrise strong{color:#f5bd59}
+  .solar-strip .sunset i,.solar-strip .sunset strong{color:#f08a61}
+  .hero{display:flex;align-items:center;gap:10px;padding:9px 2px 7px}
+  .orb{position:relative;width:34px;height:34px;flex:0 0 auto;border-radius:50%;background:linear-gradient(145deg,#fff0bd,#ffc455);box-shadow:0 0 16px rgba(255,190,77,.16);overflow:hidden}
+  .orb span{display:block;width:100%;height:100%;border-radius:50%;background:#272934;transform:translate(24px,-6px);transition:transform .35s ease}
+  .orb:not(.night) span{transform:translate(38px,-9px)}
+  h1{margin:0 0 2px;font-size:15px;line-height:1;letter-spacing:-.01em}
+  .hero p{margin:0;color:#9da3b1;font-size:10px;line-height:1.2}
+  .controls{display:grid;gap:10px;padding:6px 1px 5px}
+  .controls label{display:grid;gap:3px}
+  .label-row{display:flex;justify-content:space-between;align-items:baseline;padding:0 1px;color:#d7d9e0;font-size:11.5px}
+  output{color:#fff;font-size:11.5px;font-weight:650;font-variant-numeric:tabular-nums}
+  input[type="range"]{--slider-color:#79a8ff;width:100%;height:22px;margin:0;appearance:none;background:transparent;cursor:pointer}
+  input[type="range"]::-webkit-slider-runnable-track{height:5px;border-radius:5px;background:linear-gradient(90deg,color-mix(in srgb,var(--slider-color) 88%,white) 0 var(--value),rgba(255,255,255,.22) var(--value) 100%);box-shadow:inset 0 1px 2px rgba(0,0,0,.32)}
+  input[type="range"]::-webkit-slider-thumb{width:16px;height:16px;margin-top:-5.5px;appearance:none;border:2px solid #dce7fb;border-radius:50%;background:var(--slider-color);box-shadow:0 2px 6px rgba(0,0,0,.45)}
+  input[type="range"]:focus-visible{outline:none}
+  input[type="range"]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px rgba(255,255,255,.22),0 2px 6px rgba(0,0,0,.45)}
+  input[type="range"].overlay{--slider-color:#57c9c1}
+  input[type="range"].warmth{--slider-color:#f1a65c}
+  input:disabled{opacity:.42;cursor:default}
+  .adjustment-state{min-height:27px;padding:2px 1px 4px}
+  .adjustment-note{display:flex;align-items:center;justify-content:space-between;min-height:23px;color:#9298a7;font-size:9.5px}
+  .adjustment-note button{padding:4px 8px;border-radius:7px;background:rgba(121,168,255,.12);color:#a9c8ff;font-size:9.5px}
+  .reset-wide{width:100%;padding:5px;border-radius:7px;background:rgba(121,168,255,.13);color:#b8d1ff;font-size:10px}
+  .bottom-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:auto;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)}
+  .mode-row{display:flex;align-items:center;gap:9px;min-width:0}
+  .mode-row>div{display:grid;gap:0}
+  .mode-row strong{font-size:10.5px;font-weight:650;line-height:1.15}
+  .mode-row div span{color:#858b9a;font-size:8.5px;line-height:1.15}
+  .switch{position:relative;width:34px;height:20px;flex:0 0 auto;padding:2px;border-radius:20px;background:#4a4e5b;transition:background .16s ease}
+  .switch span{display:block;width:16px;height:16px;border-radius:50%;background:#e6e8ed;box-shadow:0 1px 4px rgba(0,0,0,.35);transition:transform .16s ease}
+  .switch.on{background:#6f9ce8}
+  .switch.on span{transform:translateX(14px);background:white}
+  .switch:focus-visible{outline:2px solid #9ec1ff;outline-offset:3px}
+  .icon-button{display:grid;place-items:center;width:46px;height:42px;flex:0 0 auto;border:1px solid rgba(121,168,255,.3);border-radius:11px;background:rgba(121,168,255,.14);color:#e9f0ff;font-size:25px;line-height:1;box-shadow:inset 0 1px rgba(255,255,255,.08)}
   .icon-button:hover, .icon-button:focus-visible { border-color: rgba(121,168,255,.5); background: rgba(121,168,255,.2); color: #fff; outline: none; }
-  .hero { display: flex; align-items: center; gap: 13px; padding: 10px 2px 12px; }
-  .orb { position:relative;width:48px;height:48px;flex:0 0 auto;border-radius:50%;background:linear-gradient(145deg,#fff0bd,#ffc455);box-shadow:0 0 20px rgba(255,190,77,.18);overflow:hidden }
-  .orb span { display:block;width:100%;height:100%;border-radius:50%;overflow:hidden;background:#272934;transform:translate(34px,-8px);transition:transform .35s ease }
-  .orb:not(.night) span { transform:translate(52px,-12px) }
-  .orb b{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:11px;font-weight:750;letter-spacing:.02em;text-shadow:0 1px 4px rgba(0,0,0,.8)}
-  h1 { margin: 0 0 1px; font-size: 16px; line-height: 1.12; letter-spacing: -.02em; }
-  .hero p { margin: 0; color: #aeb3c0; font-size: 10.5px; line-height: 1.2; }
-  .controls { display: grid; gap: 11px; padding: 11px 13px 10px; border: 1px solid rgba(255,255,255,.075); border-radius: 11px; background: rgba(255,255,255,.035); }
-  .controls label { display: grid; gap: 6px; }
-  .label-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; color: #d7d9e0; }
-  output { color: #fff; font-size: 11.5px; font-weight: 650; font-variant-numeric: tabular-nums; }
-  input[type="range"] { width: 100%; height: 6px; margin: 4px 0 2px; accent-color: #79a8ff; cursor: pointer; }
-  input[type="range"].warmth { accent-color: #f1a65c; }
-  input[type="range"].overlay { accent-color: #57c9c1; }
-  input:disabled { opacity: .42; cursor: default; }
-  .mode-row { display:flex;align-items:center;gap:9px;min-width:0;padding:0 }
-  .mode-row > div { display:grid;gap:0 }
-  .mode-row strong { font-size:10.5px;font-weight:650;line-height:1.15 }
-  .mode-row div span { color:#858b9a;font-size:8.5px;line-height:1.15 }
-  .switch { position:relative;width:34px;height:20px;flex:0 0 auto;padding:2px;border-radius:20px;background:#4a4e5b;transition:background .16s ease }
-  .switch span { display:block;width:16px;height:16px;border-radius:50%;background:#e6e8ed;box-shadow:0 1px 4px rgba(0,0,0,.35);transition:transform .16s ease }
-  .switch.on { background: #6f9ce8; }
-  .switch.on span { transform: translateX(14px); background: white; }
-  .switch:focus-visible { outline: 2px solid #9ec1ff; outline-offset: 3px; }
-  footer { min-height: 18px; }
-  .adjustment-note, .solar { display: flex; align-items: center; justify-content: space-between; min-height: 18px; padding: 0 3px; color: #9298a7; font-size: 9.5px; }
-  .adjustment-note button { padding: 3px 7px; border-radius: 6px; background: rgba(121,168,255,.12); color: #a9c8ff; font-size: 9.5px; }
-  .reset-wide { width: 100%; padding: 4px; border-radius: 7px; background: rgba(121,168,255,.13); color: #b8d1ff; font-size: 10px; }
-  .error { margin: 4px; color: #ffaaa3; font-size: 11px; }
+  .error{position:absolute;z-index:3;left:14px;right:14px;bottom:62px;margin:0;padding:7px 9px;border:1px solid rgba(255,120,112,.24);border-radius:8px;background:rgba(49,27,31,.96);color:#ffaaa3;font-size:10px;line-height:1.25;box-shadow:0 5px 15px rgba(0,0,0,.35)}
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
