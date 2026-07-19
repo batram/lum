@@ -7,7 +7,6 @@
   const sections = [
     ["overview", "⌂", "Overview"],
     ["schedule", "◴", "Schedule"],
-    ["displays", "▣", "Displays"],
     ["exceptions", "⊘", "Exceptions"],
     ["hotkeys", "⌨", "Hotkeys"],
     ["general", "⚙", "General"],
@@ -31,7 +30,6 @@
   let settings = $state(null);
   let state = $state(null);
   let monitors = $state([]);
-  let monitorBrightness = $state([]);
   let autostart = $state(false);
   let saveStatus = $state("Loading…");
   let loadError = $state("");
@@ -58,7 +56,6 @@
         lastSaved = JSON.stringify(loadedSettings);
         ready = true;
         saveStatus = "Saved";
-        await pollBrightness();
       } catch (reason) {
         loadError = `Lum could not load settings: ${reason}`;
       }
@@ -66,10 +63,9 @@
     const stateInterval = setInterval(async () => {
       try { state = await invoke("get_app_state"); } catch { /* status is supplementary */ }
     }, 1000);
-    const monitorInterval = setInterval(pollBrightness, 4000);
     return () => {
       disposed = true;
-      clearInterval(stateInterval); clearInterval(monitorInterval); clearTimeout(saveTimer);
+      clearInterval(stateInterval); clearTimeout(saveTimer);
     };
   });
 
@@ -89,19 +85,6 @@
       }
     }, 420);
   });
-
-  async function pollBrightness() {
-    if (!monitors.length) return;
-    try {
-      const levels = await invoke("get_all_brightness");
-      monitorBrightness = monitors.map((monitor, index) => levels[index] ?? monitorBrightness[index] ?? 50);
-    } catch { /* DDC/CI reads can fail while monitors sleep */ }
-  }
-
-  function setMonitorBrightness(index, value) {
-    monitorBrightness[index] = Number(value);
-    invoke("set_monitor_brightness", { index, percent: Number(value) });
-  }
 
   function addApp() {
     appError = "";
@@ -187,25 +170,16 @@
         <section class="status-hero">
           <div class="status-orb" class:night={(state?.intensity ?? 0) > .45}></div>
           <div><span class="eyebrow">Right now</span><h2>{phaseName(state?.phase)} light</h2><p>{state?.automatic ? `${state?.next_transition_label} at ${state?.next_transition_time}` : "Holding your current appearance"}</p></div>
-          <div class="live-values"><span><b>{state?.brightness_pct ?? "—"}%</b>Brightness</span><span><b>{state?.color_temp_k ?? "—"}K</b>Temperature</span></div>
+          <div class="live-values"><span><b>{state?.hardware_brightness_pct ?? "—"}%</b>Hardware</span><span><b>{state?.overlay_brightness_pct ?? "—"}%</b>Overlay</span><span><b>{state?.color_temp_k ?? "—"}K</b>Temperature</span></div>
         </section>
         <div class="overview-grid">
           <button class="summary-card" type="button" onclick={() => navigate("schedule")}><span class="card-icon blue">◴</span><span><strong>Sun schedule</strong><small>Sunrise {state?.sunrise} · Sunset {state?.sunset}</small></span><b>›</b></button>
-          <button class="summary-card" type="button" onclick={() => navigate("displays")}><span class="card-icon violet">▣</span><span><strong>{monitors.length || "No"} display{monitors.length === 1 ? "" : "s"}</strong><small>{monitors.some((m) => m.supports_brightness) ? "Hardware brightness available" : "Using gamma brightness"}</small></span><b>›</b></button>
+          <button class="summary-card" type="button" onclick={() => navigate("schedule")}><span class="card-icon violet">▣</span><span><strong>{monitors.filter((monitor) => monitor.supports_brightness).length} of {monitors.length} displays</strong><small>Hardware brightness capability · configure in Schedule</small></span><b>›</b></button>
           <button class="summary-card" type="button" onclick={() => navigate("exceptions")}><span class="card-icon amber">⊘</span><span><strong>App exceptions</strong><small>{settings.pause_apps.length ? `${settings.pause_apps.length} configured` : "No apps configured"}</small></span><b>›</b></button>
         </div>
       {:else if active === "schedule"}
         <header><p>Settings</p><h1>Schedule</h1><span>Shape how your displays change through the day.</span></header>
-        <Curves {settings} />
-        <section class="card">
-          <div class="card-heading"><div><h2>Day and night levels</h2><p>These controls mirror the handles in the chart.</p></div></div>
-          <div class="control-grid">
-            <label><span>Day brightness <b>{settings.brightness.day_percent}%</b></span><input type="range" min="30" max="100" bind:value={settings.brightness.day_percent} /></label>
-            <label><span>Night brightness <b>{settings.brightness.night_percent}%</b></span><input type="range" min="10" max="100" bind:value={settings.brightness.night_percent} /></label>
-            <label><span>Day temperature <b>{settings.color.day_temp_k}K</b></span><input class="warm" type="range" min="4000" max="10000" step="100" bind:value={settings.color.day_temp_k} /></label>
-            <label><span>Night temperature <b>{settings.color.night_temp_k}K</b></span><input class="warm" type="range" min="1800" max="5000" step="100" bind:value={settings.color.night_temp_k} /></label>
-          </div>
-        </section>
+        <Curves {settings} {monitors} />
         <section class="card">
           <div class="card-heading"><div><h2>Transition timing</h2><p>Fine-tune when gradual changes begin and end.</p></div></div>
           <div class="field-grid">
@@ -213,29 +187,8 @@
             <label><span>Morning offset</span><div class="number-field"><input type="number" min="-240" max="240" bind:value={settings.fade.morning_offset_min} /><em>min after sunrise</em></div></label>
             <label><span>Fade duration</span><div class="number-field"><input type="number" min="5" max="240" bind:value={settings.fade.fade_duration_min} /><em>minutes</em></div></label>
           </div>
-          <label class="toggle-row"><span><strong>Use civil twilight</strong><small>Begin changes when the sun is 6° below the horizon.</small></span><input type="checkbox" bind:checked={settings.fade.use_civil_twilight} /></label>
-        </section>
-      {:else if active === "displays"}
-        <header><p>Settings</p><h1>Displays</h1><span>Choose how Lum controls color and brightness.</span></header>
-        <section class="card">
-          <div class="card-heading"><div><h2>Rendering engine</h2><p>Gamma ramps work on the widest range of Windows displays.</p></div></div>
-          <div class="choice-grid">
-            <label class:chosen={settings.engine === "gamma_ramps"}><input type="radio" bind:group={settings.engine} value="gamma_ramps" /><span><strong>Gamma ramps</strong><small>Recommended · instant and reliable</small></span><i>✓</i></label>
-            <label class:chosen={settings.engine === "night_light"}><input type="radio" bind:group={settings.engine} value="night_light" /><span><strong>Windows Night Light</strong><small>Registry integration · experimental</small></span><i>✓</i></label>
-          </div>
-        </section>
-        <section class="card">
-          <div class="card-heading"><div><h2>Connected displays</h2><p>Hardware controls appear when a monitor supports DDC/CI.</p></div><span class="count">{monitors.length}</span></div>
-          {#if monitors.length}
-            <div class="monitor-list">
-              {#each monitors as monitor, index}
-                <article>
-                  <div class="monitor-icon">▰</div><div class="monitor-body"><div><strong>{monitor.description || `Display ${index + 1}`}</strong><span class:ok={monitor.supports_brightness}>{monitor.supports_brightness ? "DDC/CI available" : "Gamma control"}</span></div>
-                  {#if monitor.supports_brightness}<label><input type="range" min="0" max="100" value={monitorBrightness[index] ?? 50} oninput={(event) => setMonitorBrightness(monitor.index, event.currentTarget.value)} /><output>{monitorBrightness[index] ?? "—"}%</output></label>{:else}<p>This display does not expose hardware brightness. Lum will use gamma brightness instead.</p>{/if}</div>
-                </article>
-              {/each}
-            </div>
-          {:else}<div class="empty"><span>▣</span><strong>No controllable displays found</strong><p>Lum will continue using gamma ramps. Check that DDC/CI is enabled in your monitor’s menu.</p></div>{/if}
+          <label class="toggle-row"><span><strong>Use civil twilight</strong><small>Anchor display transitions and theme markers to civil dawn and dusk.</small></span><input type="checkbox" bind:checked={settings.fade.use_civil_twilight} /></label>
+          <label class="toggle-row"><span><strong>Switch Windows theme automatically</strong><small>Drag the Light and Dark markers in the chart to adjust their solar offsets.</small></span><input type="checkbox" bind:checked={settings.theme.auto_switch} /></label>
         </section>
       {:else if active === "exceptions"}
         <header><p>Settings</p><h1>Exceptions</h1><span>Temporarily restore neutral color for color-sensitive work.</span></header>
@@ -271,8 +224,6 @@
           {#if editingLocation}<div class="map-panel"><MapPicker lat={settings.location.latitude} lng={settings.location.longitude} onPick={pickLocation} /></div>{/if}
         </section>
         <section class="card rows">
-          <label class="toggle-row"><span><strong>Switch Windows theme automatically</strong><small>Match the light and dark Windows theme to your sun schedule.</small></span><input type="checkbox" bind:checked={settings.theme.auto_switch} /></label>
-          <label class="toggle-row" class:disabled={!settings.theme.auto_switch}><span><strong>Use dark theme at night</strong><small>Use the light theme during daytime hours.</small></span><input type="checkbox" disabled={!settings.theme.auto_switch} bind:checked={settings.theme.dark_at_night} /></label>
           <label class="toggle-row"><span><strong>Start Lum with Windows</strong><small>Launch quietly in the notification area after sign-in.</small></span><input type="checkbox" checked={autostart} onchange={toggleAutostart} /></label>
         </section>
       {/if}
@@ -315,16 +266,12 @@
   .summary-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; padding: 14px 16px; border: 1px solid #2d303a; border-radius: 12px; background: #20222b; text-align: left; cursor: pointer; }.summary-card:hover { border-color: #414653; background: #232630; }.summary-card > span:nth-child(2) { display:grid;gap:3px;}.summary-card small { color:#858b98; }.summary-card > b { color:#777e8d;font-size:20px; }
   .card-icon { display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:#26354a;color:#8eb8ff;}.card-icon.violet{background:#322d47;color:#b9a6f5}.card-icon.amber{background:#3a3025;color:#efb96b}
   .card { margin-top: 14px; padding: 20px; border: 1px solid #30333e; border-radius: 14px; background: #20222b; }
-  .card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 19px; }.card-heading p { margin: 5px 0 0; color: #858b98; font-size: 12px; }.count { display:grid;place-items:center;min-width:25px;height:25px;border-radius:8px;background:#2d303b;color:#aab0bd;font-size:11px; }
-  .control-grid { display:grid;grid-template-columns:1fr 1fr;gap:22px 28px; }.control-grid label { display:grid;gap:10px; }.control-grid label span { display:flex;justify-content:space-between;color:#b8bcc6;font-size:12px; }.control-grid b { color:#f3f4f7;font-variant-numeric:tabular-nums; }
-  input[type="range"] { width:100%;height:4px;accent-color:#76a6f5;cursor:pointer; }.warm{accent-color:#e99b53!important;}
+  .card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 19px; }.card-heading p { margin: 5px 0 0; color: #858b98; font-size: 12px; }
   .field-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:12px; }.field-grid > label { display:grid;gap:7px;color:#aeb3bf;font-size:11px; }.number-field { display:flex;align-items:center;border:1px solid #3a3e49;border-radius:9px;background:#1a1b22;overflow:hidden; }.number-field input { width:72px;padding:9px;border:0;background:transparent;color:white;outline:none; }.number-field em { color:#737987;font-size:10px;font-style:normal; }
-  .toggle-row { display:flex;align-items:center;justify-content:space-between;gap:20px;padding-top:17px;border-top:1px solid #2e313b; }.toggle-row > span { display:grid;gap:4px; }.toggle-row strong {font-size:12px}.toggle-row small{color:#858b98}.toggle-row input{width:38px;height:20px;accent-color:#6f9ce8}.toggle-row.disabled{opacity:.45}.rows{display:grid;gap:18px}.rows .toggle-row:first-child{padding-top:0;border-top:0}
-  .choice-grid {display:grid;grid-template-columns:1fr 1fr;gap:10px}.choice-grid label{position:relative;display:flex;align-items:center;gap:11px;padding:14px;border:1px solid #363a46;border-radius:11px;cursor:pointer}.choice-grid label.chosen{border-color:#618bd0;background:#252e3e}.choice-grid input{position:absolute;opacity:0}.choice-grid label span{display:grid;gap:4px}.choice-grid small{color:#858b98}.choice-grid i{display:none;margin-left:auto;color:#8cb4ff}.choice-grid .chosen i{display:block}
-  .monitor-list{display:grid}.monitor-list article{display:flex;gap:14px;padding:16px 0;border-top:1px solid #2e313b}.monitor-list article:first-child{padding-top:0;border-top:0}.monitor-icon{display:grid;place-items:center;width:38px;height:34px;border-radius:8px;background:#2a2d37;color:#9da4b2}.monitor-body{flex:1}.monitor-body>div{display:flex;justify-content:space-between;gap:12px}.monitor-body span{color:#bd8b75;font-size:10px}.monitor-body span.ok{color:#72c497}.monitor-body label{display:flex;align-items:center;gap:12px;margin-top:13px}.monitor-body output{width:38px;color:#b4b8c2;font-size:11px;text-align:right}.monitor-body p{margin:8px 0 0;color:#7f8592;font-size:11px}
-  .empty{display:grid;justify-items:center;padding:30px 20px;color:#818795;text-align:center}.empty>span{font-size:27px}.empty strong{margin-top:8px;color:#c4c8d0}.empty p{max-width:430px;margin:6px 0 0;font-size:11px}.empty.compact{padding:24px}.add-app{display:flex;gap:8px}.add-app input{flex:1;padding:10px 12px;border:1px solid #393d48;border-radius:9px;background:#191a21;color:white;outline:none}.add-app input:focus{border-color:#6c93d2}.add-app button,.secondary{padding:9px 13px;border:1px solid #424653;border-radius:9px;background:#2b2e38;cursor:pointer;font-size:11px}.inline-error{color:#ffaaa3;font-size:11px}.app-list{margin-top:13px}.app-list>div:not(.empty){display:flex;align-items:center;gap:11px;padding:12px 2px;border-top:1px solid #2e313b}.app-list strong{font-size:12px}.app-list button{margin-left:auto;border:0;background:transparent;color:#d78d89;cursor:pointer;font-size:11px}.app-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:#2b2e38;color:#959ba8}
+  .toggle-row { display:flex;align-items:center;justify-content:space-between;gap:20px;padding-top:17px;border-top:1px solid #2e313b; }.toggle-row > span { display:grid;gap:4px; }.toggle-row strong {font-size:12px}.toggle-row small{color:#858b98}.toggle-row input{width:38px;height:20px;accent-color:#6f9ce8}.rows{display:grid;gap:18px}.rows .toggle-row:first-child{padding-top:0;border-top:0}
+  .empty{display:grid;justify-items:center;padding:30px 20px;color:#818795;text-align:center}.empty strong{margin-top:8px;color:#c4c8d0}.empty p{max-width:430px;margin:6px 0 0;font-size:11px}.empty.compact{padding:24px}.add-app{display:flex;gap:8px}.add-app input{flex:1;padding:10px 12px;border:1px solid #393d48;border-radius:9px;background:#191a21;color:white;outline:none}.add-app input:focus{border-color:#6c93d2}.add-app button,.secondary{padding:9px 13px;border:1px solid #424653;border-radius:9px;background:#2b2e38;cursor:pointer;font-size:11px}.inline-error{color:#ffaaa3;font-size:11px}.app-list{margin-top:13px}.app-list>div:not(.empty){display:flex;align-items:center;gap:11px;padding:12px 2px;border-top:1px solid #2e313b}.app-list strong{font-size:12px}.app-list button{margin-left:auto;border:0;background:transparent;color:#d78d89;cursor:pointer;font-size:11px}.app-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:#2b2e38;color:#959ba8}
   .location-summary{display:flex;align-items:center;gap:12px}.location-summary>span{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#2b3040;color:#8aaff0;font-size:18px}.location-summary>div{display:grid;gap:4px}.location-summary small{color:#858b98}.map-panel{margin-top:17px}.notice{display:grid;gap:5px;padding:16px;border-radius:12px}.notice.danger{background:#3b2327;color:#ffb5af}.loading{color:#8c929f}.error{color:#ffaaa3}
   .hotkey-list{display:grid}.hotkey-list label{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:13px 0;border-top:1px solid #2e313b}.hotkey-list label:first-child{padding-top:0;border-top:0}.hotkey-list label>span{display:grid;gap:4px}.hotkey-list strong{font-size:12px}.hotkey-list small{color:#858b98;font-size:11px}.hotkey-list input{width:160px;padding:9px 11px;border:1px solid #3a3e49;border-radius:9px;background:#191a21;color:#dce6fa;text-align:center;outline:none;font-size:12px;font-weight:600}.hotkey-list input:focus{border-color:#6c93d2;background:#1d2230;box-shadow:0 0 0 3px rgba(108,147,210,.12)}.hotkey-list input::placeholder{color:#696f7c;font-weight:400}.hotkey-note{margin:15px 0 0;padding-top:14px;border-top:1px solid #2e313b;color:#777d8a;font-size:10.5px}
-  @media(max-width:820px){.app-shell{grid-template-columns:72px minmax(0,1fr)}aside{padding-inline:9px}.logo strong,nav button:not(.active){font-size:0}.logo{justify-content:center;padding-inline:0}.logo span{font-size:25px}nav button{justify-content:center;padding:11px}nav button span{font-size:17px}.save-state{font-size:0;justify-content:center}.control-grid,.choice-grid{grid-template-columns:1fr}.field-grid{grid-template-columns:1fr}.status-hero{grid-template-columns:auto 1fr}.live-values{grid-column:1/-1;padding-left:69px}}
+  @media(max-width:820px){.app-shell{grid-template-columns:72px minmax(0,1fr)}aside{padding-inline:9px}.logo strong,nav button:not(.active){font-size:0}.logo{justify-content:center;padding-inline:0}.logo span{font-size:25px}nav button{justify-content:center;padding:11px}nav button span{font-size:17px}.save-state{font-size:0;justify-content:center}.field-grid{grid-template-columns:1fr}.status-hero{grid-template-columns:auto 1fr}.live-values{grid-column:1/-1;padding-left:69px}}
   @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>

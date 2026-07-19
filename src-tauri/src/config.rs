@@ -8,9 +8,6 @@ pub struct Settings {
     /// Schema version for forward-compatible migration.
     pub version: u32,
 
-    /// Which rendering backend to use.
-    pub engine: EngineKind,
-
     /// User's geographic location for sun calculations.
     pub location: Location,
 
@@ -32,13 +29,6 @@ pub struct Settings {
     /// User-configurable global keyboard shortcuts.
     #[serde(default)]
     pub hotkeys: HotkeyConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum EngineKind {
-    GammaRamps,
-    NightLight,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,26 +62,19 @@ pub struct ColorConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrightnessConfig {
-    /// Daytime brightness percentage (0-100).
-    pub day_percent: u8,
-    /// Nighttime brightness percentage (0-100). Floor to never go fully dark.
-    pub night_percent: u8,
-    /// Whether brightness follows the same curve as color or a separate one.
-    pub linked_to_color: bool,
+    pub hardware_day_percent: u8,
+    pub hardware_night_percent: u8,
+    pub overlay_day_percent: u8,
+    pub overlay_night_percent: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeConfig {
-    /// Automatically switch Windows theme with the sun schedule.
     pub auto_switch: bool,
-    /// Use dark theme at night (true) or during day (false).
-    pub dark_at_night: bool,
-    /// Minutes from midnight to switch TO dark theme (0-1440). Draggable on curve UI.
-    #[serde(default = "default_dark_at")]
-    pub dark_at_min: u32,
-    /// Minutes from midnight to switch TO light theme (0-1440). Draggable on curve UI.
-    #[serde(default = "default_light_at")]
-    pub light_at_min: u32,
+    /// Offset from sunset/civil dusk, in minutes.
+    pub dark_offset_min: i32,
+    /// Offset from sunrise/civil dawn, in minutes.
+    pub light_offset_min: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,14 +101,10 @@ impl Default for HotkeyConfig {
     }
 }
 
-fn default_dark_at() -> u32 { 1200 } // 20:00
-fn default_light_at() -> u32 { 420 } // 07:00
-
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            version: 1,
-            engine: EngineKind::GammaRamps,
+            version: 2,
             location: Location {
                 // Default: New York City
                 latitude: 40.7128,
@@ -143,15 +122,15 @@ impl Default for Settings {
                 night_temp_k: 3400,
             },
             brightness: BrightnessConfig {
-                day_percent: 100,
-                night_percent: 70,
-                linked_to_color: true,
+                hardware_day_percent: 100,
+                hardware_night_percent: 70,
+                overlay_day_percent: 100,
+                overlay_night_percent: 100,
             },
             theme: ThemeConfig {
                 auto_switch: true,
-                dark_at_night: true,
-                dark_at_min: 1200,
-                light_at_min: 420,
+                dark_offset_min: 0,
+                light_offset_min: 0,
             },
             pause_apps: vec![
                 "photoshop.exe".to_string(),

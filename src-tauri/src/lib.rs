@@ -39,15 +39,25 @@ fn set_automatic(engine: State<'_, Arc<FadeEngine>>, automatic: bool) {
 #[tauri::command]
 fn set_temporary_adjustments(
     engine: State<'_, Arc<FadeEngine>>,
-    brightness_offset_pct: i16,
+    hardware_offset_pct: i16,
+    overlay_offset_pct: i16,
     temperature_offset_k: i32,
 ) {
-    engine.set_adjustments(brightness_offset_pct, temperature_offset_k);
+    engine.set_adjustments(
+        hardware_offset_pct,
+        overlay_offset_pct,
+        temperature_offset_k,
+    );
 }
 
 #[tauri::command]
 fn reset_temporary_adjustments(engine: State<'_, Arc<FadeEngine>>) {
     engine.reset_adjustments();
+}
+
+#[tauri::command]
+fn set_schedule_preview(engine: State<'_, Arc<FadeEngine>>, minute: Option<u16>) {
+    engine.set_preview_minute(minute);
 }
 
 #[tauri::command]
@@ -153,29 +163,6 @@ fn get_monitors() -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Tauri command: set brightness on all monitors (0-100).
-#[tauri::command]
-fn set_brightness(percent: u8) -> bool {
-    ddcci::set_all_brightness(percent)
-}
-
-/// Tauri command: set brightness on a specific monitor.
-#[tauri::command]
-fn set_monitor_brightness(index: usize, percent: u8) -> bool {
-    ddcci::set_monitor_brightness(index, percent)
-}
-
-/// Tauri command: read current brightness from all monitors.
-/// Returns a vec of Option<u8> (None if monitor doesn't support DDC/CI).
-#[tauri::command]
-fn get_all_brightness() -> Vec<Option<u8>> {
-    let monitors = ddcci::get_monitors();
-    monitors
-        .iter()
-        .map(|m| ddcci::get_monitor_brightness(m.index))
-        .collect()
-}
-
 /// Tauri command: get full settings as JSON.
 #[tauri::command]
 fn get_settings() -> config::Settings {
@@ -215,6 +202,7 @@ pub fn run() {
             set_automatic,
             set_temporary_adjustments,
             reset_temporary_adjustments,
+            set_schedule_preview,
             set_effects_off,
             hide_quick_panel,
             open_settings_window,
@@ -228,9 +216,6 @@ pub fn run() {
             get_autostart,
             get_foreground_app,
             get_monitors,
-            set_brightness,
-            set_monitor_brightness,
-            get_all_brightness,
             get_settings,
             save_settings,
         ])

@@ -238,45 +238,6 @@ pub fn set_all_brightness(percent: u8) -> bool {
     any_success
 }
 
-/// Set brightness on a specific monitor by index.
-pub fn set_monitor_brightness(index: usize, percent: u8) -> bool {
-    let percent = percent.clamp(0, 100) as f64 / 100.0;
-
-    let monitors = MONITORS.lock().unwrap();
-    if let Some(monitors) = monitors.as_ref() {
-        if let Some(m) = monitors.iter().find(|m| m.info.index == index) {
-            if !m.info.supports_brightness {
-                return false;
-            }
-            let range = m.info.brightness_max.saturating_sub(m.info.brightness_min);
-            let target = m.info.brightness_min + (range as f64 * percent).round() as u32;
-            return unsafe { SetMonitorBrightness(m.handle, target) != 0 };
-        }
-    }
-    false
-}
-
-/// Get current brightness (as 0–100%) from a specific monitor.
-pub fn get_monitor_brightness(index: usize) -> Option<u8> {
-    let monitors = MONITORS.lock().unwrap();
-    if let Some(monitors) = monitors.as_ref() {
-        if let Some(m) = monitors.iter().find(|m| m.info.index == index) {
-            if !m.info.supports_brightness {
-                return None;
-            }
-            let mut min_b: u32 = 0;
-            let mut cur_b: u32 = 0;
-            let mut max_b: u32 = 0;
-            let ok = unsafe { GetMonitorBrightness(m.handle, &mut min_b, &mut cur_b, &mut max_b) };
-            if ok != 0 && max_b > min_b {
-                let pct = ((cur_b - min_b) as f64 / (max_b - min_b) as f64 * 100.0).round();
-                return Some(pct as u8);
-            }
-        }
-    }
-    None
-}
-
 /// Cleanup: destroy all physical monitor handles. Call on app exit.
 pub fn cleanup() {
     let mut monitors = MONITORS.lock().unwrap();

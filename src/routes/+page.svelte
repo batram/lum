@@ -4,17 +4,18 @@
 
   const emptyState = {
     phase: "loading", intensity: 0,
-    scheduled_color_temp_k: 6500, scheduled_brightness_pct: 100,
-    color_temp_k: 6500, brightness_pct: 100,
+    scheduled_color_temp_k: 6500, scheduled_hardware_brightness_pct: 100, scheduled_overlay_brightness_pct: 100,
+    color_temp_k: 6500, hardware_brightness_pct: 100, overlay_brightness_pct: 100,
     sunrise: "--:--", sunset: "--:--",
     next_transition_label: "Calculating schedule", next_transition_time: "--:--",
     automatic: true, effects_off: false, app_bypassed: false,
-    brightness_offset_pct: 0, temperature_offset_k: 0,
+    hardware_offset_pct: 0, overlay_offset_pct: 0, temperature_offset_k: 0,
     adjustment_expires_at: null,
   };
 
   let state = $state({ ...emptyState });
-  let brightness = $state(100);
+  let hardwareBrightness = $state(100);
+  let overlayBrightness = $state(100);
   let temperature = $state(6500);
   let loaded = $state(false);
   let error = $state("");
@@ -45,7 +46,8 @@
     try {
       const next = await invoke("get_app_state");
       const confirmed = pendingAdjustment &&
-        Math.abs(next.brightness_pct - pendingAdjustment.brightness) <= 1 &&
+        Math.abs(next.hardware_brightness_pct - pendingAdjustment.hardware) <= 1 &&
+        Math.abs(next.overlay_brightness_pct - pendingAdjustment.overlay) <= 1 &&
         Math.abs(next.color_temp_k - pendingAdjustment.temperature) <= 150;
       const expired = pendingAdjustment && Date.now() > pendingAdjustment.expires;
       if (confirmed || expired) pendingAdjustment = null;
@@ -57,14 +59,16 @@
         ...(pendingAdjustment ? {
           automatic: state.automatic,
           effects_off: state.effects_off,
-          brightness_offset_pct: state.brightness_offset_pct,
+          hardware_offset_pct: state.hardware_offset_pct,
+          overlay_offset_pct: state.overlay_offset_pct,
           temperature_offset_k: state.temperature_offset_k,
           adjustment_expires_at: state.adjustment_expires_at ?? state.next_transition_time,
         } : {}),
         ...(pendingAutomatic ? { automatic: pendingAutomatic.value } : {}),
       };
       if (!loaded || (!interacting && !pendingAdjustment)) {
-        brightness = next.brightness_pct;
+        hardwareBrightness = next.hardware_brightness_pct;
+        overlayBrightness = next.overlay_brightness_pct;
         temperature = next.color_temp_k;
       }
       loaded = true;
@@ -75,12 +79,15 @@
   }
 
   function queueAdjustment() {
-    const desiredBrightness = Number(brightness);
+    const desiredHardware = Number(hardwareBrightness);
+    const desiredOverlay = Number(overlayBrightness);
     const desiredTemperature = Number(temperature);
-    const brightnessOffset = Math.round(desiredBrightness - state.scheduled_brightness_pct);
+    const hardwareOffset = Math.round(desiredHardware - state.scheduled_hardware_brightness_pct);
+    const overlayOffset = Math.round(desiredOverlay - state.scheduled_overlay_brightness_pct);
     const temperatureOffset = Math.round(desiredTemperature - state.scheduled_color_temp_k);
     pendingAdjustment = {
-      brightness: desiredBrightness,
+      hardware: desiredHardware,
+      overlay: desiredOverlay,
       temperature: desiredTemperature,
       expires: Date.now() + 4000,
     };
@@ -88,7 +95,8 @@
       ...state,
       automatic: true,
       effects_off: false,
-      brightness_offset_pct: brightnessOffset,
+      hardware_offset_pct: hardwareOffset,
+      overlay_offset_pct: overlayOffset,
       temperature_offset_k: temperatureOffset,
     };
     clearTimeout(adjustmentTimer);
@@ -97,7 +105,8 @@
       adjustmentTimer = null;
       try {
         invoke("set_temporary_adjustments", {
-          brightnessOffsetPct: brightnessOffset,
+          hardwareOffsetPct: hardwareOffset,
+          overlayOffsetPct: overlayOffset,
           temperatureOffsetK: temperatureOffset,
         }).catch((reason) => {
           if (version !== requestVersion) return;
@@ -128,14 +137,16 @@
     requestVersion += 1;
     adjustmentTimer = null;
     pendingAdjustment = {
-      brightness: state.scheduled_brightness_pct,
+      hardware: state.scheduled_hardware_brightness_pct,
+      overlay: state.scheduled_overlay_brightness_pct,
       temperature: state.scheduled_color_temp_k,
       expires: Date.now() + 4000,
     };
     pendingAutomatic = { value: true, expires: Date.now() + 4000 };
-    brightness = state.scheduled_brightness_pct;
+    hardwareBrightness = state.scheduled_hardware_brightness_pct;
+    overlayBrightness = state.scheduled_overlay_brightness_pct;
     temperature = state.scheduled_color_temp_k;
-    state = { ...state, automatic: true, brightness_offset_pct: 0, temperature_offset_k: 0 };
+    state = { ...state, automatic: true, hardware_offset_pct: 0, overlay_offset_pct: 0, temperature_offset_k: 0 };
     Promise.all([
       invoke("reset_temporary_adjustments"),
       invoke("set_automatic", { automatic: true }),
@@ -155,7 +166,7 @@
     return value ? value[0].toUpperCase() + value.slice(1) : "Lum";
   }
 
-  let adjusted = $derived(state.brightness_offset_pct !== 0 || state.temperature_offset_k !== 0);
+  let adjusted = $derived(state.hardware_offset_pct !== 0 || state.overlay_offset_pct !== 0 || state.temperature_offset_k !== 0);
   let statusLine = $derived(
     state.effects_off ? "Effects are off" :
     state.app_bypassed ? "Paused for this application" :
@@ -185,13 +196,16 @@
 
   <section class="controls" aria-label="Temporary display adjustments">
     <label>
-      <span class="label-row"><span>Brightness</span><output>{brightness}%</output></span>
-      <input aria-label="Temporary brightness" type="range" min="0" max="100" step="1" bind:value={brightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+      <span class="label-row"><span>Hardware</span><output>{hardwareBrightness}%</output></span>
+      <input aria-label="Temporary hardware brightness" type="range" min="0" max="100" step="1" bind:value={hardwareBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+    </label>
+    <label>
+      <span class="label-row"><span>Overlay</span><output>{overlayBrightness}%</output></span>
+      <input class="overlay" aria-label="Temporary overlay brightness" type="range" min="5" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
     </label>
     <label>
       <span class="label-row"><span>Warmth</span><output>{temperature}K</output></span>
       <input class="warmth" aria-label="Temporary color temperature" type="range" min="1800" max="10000" step="100" bind:value={temperature} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
-      <span class="scale"><span>Warmer</span><span>Cooler</span></span>
     </label>
   </section>
 
@@ -243,8 +257,8 @@
   output { color: #fff; font-size: 11.5px; font-weight: 650; font-variant-numeric: tabular-nums; }
   input[type="range"] { width: 100%; height: 4px; margin: 3px 0; accent-color: #79a8ff; cursor: pointer; }
   input[type="range"].warmth { accent-color: #f1a65c; }
+  input[type="range"].overlay { accent-color: #57c9c1; }
   input:disabled { opacity: .42; cursor: default; }
-  .scale { display: flex; justify-content: space-between; margin-top: -3px; color: #777d8c; font-size: 8.5px; line-height: 1; }
   .mode-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 3px 3px; }
   .mode-row > div { display: grid; gap: 1px; }
   .mode-row strong { font-size: 11.5px; font-weight: 600; }
