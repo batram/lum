@@ -5,11 +5,10 @@
   let { settings, monitors = [] } = $props();
 
   const W = 900;
-  const H = 490;
-  const PAD = { left: 68, right: 30, top: 72, bottom: 42 };
+  const H = 370;
+  const PAD = { left: 68, right: 68, top: 92, bottom: 42 };
   const PLOT_W = W - PAD.left - PAD.right;
-  const BRIGHT = { top: 82, height: 142 };
-  const TEMP = { top: 286, height: 142 };
+  const PLOT = { top: 92, height: 224 };
   const hours = Array.from({ length: 25 }, (_, index) => index);
 
   let svgEl = $state(null);
@@ -17,13 +16,18 @@
   let sunTimes = $state(null);
   let solarError = $state(false);
   let now = $state(new Date());
+  let dateKey = $state(localDateKey(new Date()));
   let previewMinute = $state(null);
   let requestId = 0;
   let previewTimer;
   let queuedPreviewMinute = null;
 
   onMount(() => {
-    const timer = setInterval(() => (now = new Date()), 1000);
+    const timer = setInterval(() => {
+      now = new Date();
+      const nextDateKey = localDateKey(now);
+      if (nextDateKey !== dateKey) dateKey = nextDateKey;
+    }, 1000);
     const cancel = () => stopPreview();
     const keydown = (event) => event.key === "Escape" && stopPreview();
     window.addEventListener("blur", cancel);
@@ -40,7 +44,7 @@
   $effect(() => {
     const latitude = Number(settings.location.latitude);
     const longitude = Number(settings.location.longitude);
-    if (Number.isFinite(latitude) && Number.isFinite(longitude)) loadSunTimes(latitude, longitude);
+    if (dateKey && Number.isFinite(latitude) && Number.isFinite(longitude)) loadSunTimes(latitude, longitude);
   });
 
   async function loadSunTimes(latitude, longitude) {
@@ -58,13 +62,14 @@
     const [hour, minute] = value.split(":").map(Number);
     return hour * 60 + minute;
   }
+  function localDateKey(value) { return `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}`; }
   function wrapMinute(value) { return ((Math.round(value) % 1440) + 1440) % 1440; }
   function xForMinute(minute) { return PAD.left + ((minute >= 1440 ? 1440 : wrapMinute(minute)) / 1440) * PLOT_W; }
   function minuteForX(x) { return wrapMinute(((x - PAD.left) / PLOT_W) * 1440); }
-  function yForPercent(value) { return BRIGHT.top + BRIGHT.height - (value / 100) * BRIGHT.height; }
-  function yForKelvin(value) { return TEMP.top + TEMP.height - ((value - 1800) / 8200) * TEMP.height; }
-  function percentForY(y, floor) { return Math.round(Math.max(floor, Math.min(100, ((BRIGHT.top + BRIGHT.height - y) / BRIGHT.height) * 100))); }
-  function kelvinForY(y) { return Math.round((1800 + Math.max(0, Math.min(1, (TEMP.top + TEMP.height - y) / TEMP.height)) * 8200) / 100) * 100; }
+  function yForPercent(value) { return PLOT.top + PLOT.height - (value / 100) * PLOT.height; }
+  function yForKelvin(value) { return yForPercent(((value - 1800) / 8200) * 100); }
+  function percentForY(y, floor) { return Math.round(Math.max(floor, Math.min(100, ((PLOT.top + PLOT.height - y) / PLOT.height) * 100))); }
+  function kelvinForY(y) { return Math.round((1800 + Math.max(0, Math.min(1, (PLOT.top + PLOT.height - y) / PLOT.height)) * 8200) / 100) * 100; }
   function smoothstep(start, end, value) {
     if (end <= start) return value >= end ? 1 : 0;
     const t = Math.max(0, Math.min(1, (value - start) / (end - start)));
@@ -104,6 +109,13 @@
   let darkAnchor = $derived(toMinute(settings.fade.use_civil_twilight ? sunTimes?.civil_dusk : sunTimes?.sunset));
   let lightMinute = $derived(wrapMinute(lightAnchor + Number(settings.theme.light_offset_min)));
   let darkMinute = $derived(wrapMinute(darkAnchor + Number(settings.theme.dark_offset_min)));
+  let sunriseMinute = $derived(toMinute(sunTimes?.sunrise));
+  let sunsetMinute = $derived(toMinute(sunTimes?.sunset));
+  let morningEndMinute = $derived(lightAnchor + Number(settings.fade.morning_offset_min));
+  let eveningEndMinute = $derived(darkAnchor - Number(settings.fade.evening_offset_min));
+  let eveningStartMinute = $derived(eveningEndMinute - Math.max(5, Number(settings.fade.fade_duration_min)));
+  let dayHandleMinute = $derived(wrapMinute((morningEndMinute + eveningStartMinute) / 2));
+  let nightHandleMinute = $derived(wrapMinute((eveningEndMinute + morningEndMinute + 1440) / 2));
   let activeMinute = $derived(previewMinute ?? currentMinute);
   let activeHardware = $derived(Math.round(hardwareAt(activeMinute)));
   let activeOverlay = $derived(Math.round(overlayAt(activeMinute)));
@@ -216,25 +228,21 @@
   {#if solarError}<p class="error">Could not calculate solar times for this location.</p>{/if}
 
   <svg bind:this={svgEl} viewBox={`0 0 ${W} ${H}`} class="chart" role="application" aria-label="24-hour hardware brightness, overlay dimming, and temperature schedule" onpointermove={pointerMove} onpointerup={stopDrag} onpointercancel={stopDrag}>
-    <rect x={PAD.left} y={BRIGHT.top} width={PLOT_W} height={BRIGHT.height} class="lane-bg" />
-    <rect x={PAD.left} y={TEMP.top} width={PLOT_W} height={TEMP.height} class="lane-bg" />
+    <rect x={PAD.left} y={PLOT.top} width={PLOT_W} height={PLOT.height} class="lane-bg" />
     {#each hours as hour}
       {#if hour % 3 === 0}
-        <line x1={xForMinute(hour * 60)} y1={BRIGHT.top} x2={xForMinute(hour * 60)} y2={TEMP.top + TEMP.height} class="grid vertical" />
+        <line x1={xForMinute(hour * 60)} y1={PLOT.top} x2={xForMinute(hour * 60)} y2={PLOT.top + PLOT.height} class="grid vertical" />
         <text x={xForMinute(hour * 60)} y={H - 13} class="axis">{String(hour).padStart(2, "0")}:00</text>
       {/if}
     {/each}
     {#each [0, 25, 50, 75, 100] as value}
       <line x1={PAD.left} y1={yForPercent(value)} x2={W - PAD.right} y2={yForPercent(value)} class="grid horizontal" />
       <text x={PAD.left - 10} y={yForPercent(value) + 4} class="axis y">{value}%</text>
+      <text x={W - PAD.right + 10} y={yForPercent(value) + 4} class="axis kelvin">{Math.round(1800 + value * 82)}K</text>
     {/each}
-    {#each [1800, 4000, 6500, 8000, 10000] as value}
-      <line x1={PAD.left} y1={yForKelvin(value)} x2={W - PAD.right} y2={yForKelvin(value)} class="grid horizontal" />
-      <text x={PAD.left - 10} y={yForKelvin(value) + 4} class="axis y">{value >= 10000 ? "10k" : `${(value / 1000).toFixed(1)}k`}</text>
-    {/each}
-    <text x={PAD.left} y={BRIGHT.top - 15} class="lane-title">Brightness</text>
-    <text x={PAD.left} y={TEMP.top - 15} class="lane-title">Temperature · warm 1800K → cool 10000K</text>
-    <rect x={PAD.left} y={BRIGHT.top} width={PLOT_W} height={TEMP.top + TEMP.height - BRIGHT.top} class="preview-hit" role="slider" aria-label="Preview schedule time" aria-valuemin="0" aria-valuemax="1439" aria-valuenow={Math.round(activeMinute)} tabindex="0" onkeydown={handlePreviewKey} onkeyup={stopPreview} onpointerdown={(event) => startDrag("preview", event)} />
+    <text x={PAD.left} y={PLOT.top - 15} class="lane-title">Brightness</text>
+    <text x={W - PAD.right} y={PLOT.top - 15} class="lane-title right">Temperature · warm → cool</text>
+    <rect x={PAD.left} y={PLOT.top} width={PLOT_W} height={PLOT.height} class="preview-hit" role="slider" aria-label="Preview schedule time" aria-valuemin="0" aria-valuemax="1439" aria-valuenow={Math.round(activeMinute)} tabindex="0" onkeydown={handlePreviewKey} onkeyup={stopPreview} onpointerdown={(event) => startDrag("preview", event)} />
 
     {#if sunTimes}
       <path d={hardwarePath} class="curve hardware" />
@@ -242,28 +250,31 @@
       <path d={temperaturePath} class="curve temperature" />
 
       {#each [
-        ["hardware-night", "Hardware night brightness", 60, yForPercent(settings.brightness.hardware_night_percent), settings.brightness.hardware_night_percent, "hardware"],
-        ["hardware-day", "Hardware day brightness", 720, yForPercent(settings.brightness.hardware_day_percent), settings.brightness.hardware_day_percent, "hardware"],
-        ["overlay-night", "Overlay night brightness", 90, yForPercent(settings.brightness.overlay_night_percent), settings.brightness.overlay_night_percent, "overlay"],
-        ["overlay-day", "Overlay day brightness", 750, yForPercent(settings.brightness.overlay_day_percent), settings.brightness.overlay_day_percent, "overlay"],
+        ["hardware-night", "Hardware night brightness", nightHandleMinute, yForPercent(settings.brightness.hardware_night_percent), settings.brightness.hardware_night_percent, "hardware"],
+        ["hardware-day", "Hardware day brightness", dayHandleMinute, yForPercent(settings.brightness.hardware_day_percent), settings.brightness.hardware_day_percent, "hardware"],
+        ["overlay-night", "Overlay night brightness", wrapMinute(nightHandleMinute + 18), yForPercent(settings.brightness.overlay_night_percent), settings.brightness.overlay_night_percent, "overlay"],
+        ["overlay-day", "Overlay day brightness", wrapMinute(dayHandleMinute + 18), yForPercent(settings.brightness.overlay_day_percent), settings.brightness.overlay_day_percent, "overlay"],
       ] as item}
         <g class={`handle ${item[5]}`} role="slider" aria-label={item[1]} aria-valuemin={item[5] === "overlay" ? 5 : 0} aria-valuemax="100" aria-valuenow={item[4]} tabindex="0" onkeydown={(event) => handleValueKey(item[0], event)} onpointerdown={(event) => startDrag(item[0], event)}><circle cx={xForMinute(item[2])} cy={item[3]} r="10" /><title>{item[1]}: {item[4]}%</title></g>
       {/each}
       {#each [
-        ["temperature-night", "Night temperature", 75, settings.color.night_temp_k],
-        ["temperature-day", "Day temperature", 735, settings.color.day_temp_k],
+        ["temperature-night", "Night temperature", wrapMinute(nightHandleMinute + 36), settings.color.night_temp_k],
+        ["temperature-day", "Day temperature", wrapMinute(dayHandleMinute + 36), settings.color.day_temp_k],
       ] as item}
         <g class="handle temperature" role="slider" aria-label={item[1]} aria-valuemin="1800" aria-valuemax="10000" aria-valuenow={item[3]} tabindex="0" onkeydown={(event) => handleValueKey(item[0], event)} onpointerdown={(event) => startDrag(item[0], event)}><circle cx={xForMinute(item[2])} cy={yForKelvin(item[3])} r="10" /><title>{item[1]}: {item[3]}K</title></g>
       {/each}
 
+      <g class="solar-marker sunrise"><line x1={xForMinute(sunriseMinute)} y1={PLOT.top - 6} x2={xForMinute(sunriseMinute)} y2={PLOT.top + PLOT.height} /><circle cx={xForMinute(sunriseMinute)} cy={PLOT.top - 9} r="4" /><text x={xForMinute(sunriseMinute)} y={PLOT.top - 48}>Sunrise {formatMinute(sunriseMinute)}</text></g>
+      <g class="solar-marker sunset"><line x1={xForMinute(sunsetMinute)} y1={PLOT.top - 6} x2={xForMinute(sunsetMinute)} y2={PLOT.top + PLOT.height} /><circle cx={xForMinute(sunsetMinute)} cy={PLOT.top - 9} r="4" /><text x={xForMinute(sunsetMinute)} y={PLOT.top - 48}>Sunset {formatMinute(sunsetMinute)}</text></g>
+
       {#if settings.theme.auto_switch}
-        <g class="theme-marker light" role="slider" aria-label="Light theme offset from sunrise" aria-valuemin="-720" aria-valuemax="720" aria-valuenow={settings.theme.light_offset_min} tabindex="0" onkeydown={(event) => handleThemeKey("theme-light", event)} onpointerdown={(event) => startDrag("theme-light", event)}><line x1={xForMinute(lightMinute)} y1={BRIGHT.top - 6} x2={xForMinute(lightMinute)} y2={TEMP.top + TEMP.height} /><path d={`M${xForMinute(lightMinute)-6},${BRIGHT.top-8} L${xForMinute(lightMinute)+6},${BRIGHT.top-8} L${xForMinute(lightMinute)},${BRIGHT.top} Z`} /><text x={xForMinute(lightMinute)} y={BRIGHT.top - 29}>Light {formatMinute(lightMinute)}</text><title>Light theme {offsetLabel(settings.theme.light_offset_min)}</title></g>
-        <g class="theme-marker dark" role="slider" aria-label="Dark theme offset from sunset" aria-valuemin="-720" aria-valuemax="720" aria-valuenow={settings.theme.dark_offset_min} tabindex="0" onkeydown={(event) => handleThemeKey("theme-dark", event)} onpointerdown={(event) => startDrag("theme-dark", event)}><line x1={xForMinute(darkMinute)} y1={BRIGHT.top - 6} x2={xForMinute(darkMinute)} y2={TEMP.top + TEMP.height} /><path d={`M${xForMinute(darkMinute)-6},${BRIGHT.top-8} L${xForMinute(darkMinute)+6},${BRIGHT.top-8} L${xForMinute(darkMinute)},${BRIGHT.top} Z`} /><text x={xForMinute(darkMinute)} y={BRIGHT.top - 29}>Dark {formatMinute(darkMinute)}</text><title>Dark theme {offsetLabel(settings.theme.dark_offset_min)}</title></g>
+        <g class="theme-marker light" role="slider" aria-label="Light theme offset from sunrise" aria-valuemin="-720" aria-valuemax="720" aria-valuenow={settings.theme.light_offset_min} tabindex="0" onkeydown={(event) => handleThemeKey("theme-light", event)} onpointerdown={(event) => startDrag("theme-light", event)}><line x1={xForMinute(lightMinute)} y1={PLOT.top - 6} x2={xForMinute(lightMinute)} y2={PLOT.top + PLOT.height} /><path d={`M${xForMinute(lightMinute)-6},${PLOT.top-8} L${xForMinute(lightMinute)+6},${PLOT.top-8} L${xForMinute(lightMinute)},${PLOT.top} Z`} /><text x={xForMinute(lightMinute)} y={PLOT.top - 29}>Light {formatMinute(lightMinute)}</text><title>Light theme {offsetLabel(settings.theme.light_offset_min)}</title></g>
+        <g class="theme-marker dark" role="slider" aria-label="Dark theme offset from sunset" aria-valuemin="-720" aria-valuemax="720" aria-valuenow={settings.theme.dark_offset_min} tabindex="0" onkeydown={(event) => handleThemeKey("theme-dark", event)} onpointerdown={(event) => startDrag("theme-dark", event)}><line x1={xForMinute(darkMinute)} y1={PLOT.top - 6} x2={xForMinute(darkMinute)} y2={PLOT.top + PLOT.height} /><path d={`M${xForMinute(darkMinute)-6},${PLOT.top-8} L${xForMinute(darkMinute)+6},${PLOT.top-8} L${xForMinute(darkMinute)},${PLOT.top} Z`} /><text x={xForMinute(darkMinute)} y={PLOT.top - 29}>Dark {formatMinute(darkMinute)}</text><title>Dark theme {offsetLabel(settings.theme.dark_offset_min)}</title></g>
       {/if}
     {/if}
 
-    <line x1={xForMinute(activeMinute)} y1={BRIGHT.top - 5} x2={xForMinute(activeMinute)} y2={TEMP.top + TEMP.height} class:preview={previewMinute !== null} class="time-cursor" />
-    <circle cx={xForMinute(activeMinute)} cy={BRIGHT.top - 7} r="4" class:preview={previewMinute !== null} class="time-dot" />
+    <line x1={xForMinute(activeMinute)} y1={PLOT.top - 5} x2={xForMinute(activeMinute)} y2={PLOT.top + PLOT.height} class:preview={previewMinute !== null} class="time-cursor" />
+    <circle cx={xForMinute(activeMinute)} cy={PLOT.top - 7} r="4" class:preview={previewMinute !== null} class="time-dot" />
   </svg>
 
   <div class="legend"><span><i class="hardware"></i>Hardware</span><span><i class="overlay"></i>Overlay</span><span><i class="temperature"></i>Temperature</span><span class="hint">Drag curves vertically · drag empty chart space to preview time</span></div>
@@ -271,5 +282,5 @@
 </section>
 
 <style>
-  .schedule-card{border:1px solid #353845;border-radius:15px;background:#20222b;overflow:hidden}.schedule-header{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:17px 20px 5px}.schedule-header>div:first-child{display:grid;gap:3px}.eyebrow{color:#7e9edb;font-size:10px;font-weight:650;letter-spacing:.08em;text-transform:uppercase}.schedule-header strong{font-size:20px;font-variant-numeric:tabular-nums}.preview-values{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px 14px;color:#a1a6b2;font-size:10.5px}.preview-values span,.legend span{display:flex;align-items:center;gap:6px}.preview-values i,.legend i{width:16px;height:3px;border-radius:4px}.hardware{background:#4d8df7}.overlay{background:#57c9c1}.temperature{background:#f09a55}.error{margin:5px 20px;color:#ffaaa3;font-size:11px}.chart{display:block;width:100%;height:auto;min-height:360px;touch-action:none;user-select:none}.lane-bg{fill:#1b1d25}.grid{stroke:#30333e;stroke-width:1;pointer-events:none}.horizontal{stroke-dasharray:3 5}.axis{fill:#777e8d;font:10px system-ui;text-anchor:middle}.axis.y{text-anchor:end}.lane-title{fill:#b6bbc6;font:600 11px system-ui}.curve{fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.curve.hardware{stroke:#4d8df7}.curve.overlay{stroke:#57c9c1}.curve.temperature{stroke:#f09a55}.handle{cursor:ns-resize}.handle circle{fill:#20222b;stroke-width:4;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}.handle.hardware circle{stroke:#4d8df7}.handle.overlay circle{stroke:#57c9c1}.handle.temperature circle{stroke:#f09a55}.handle:focus{outline:none}.handle:focus circle{filter:drop-shadow(0 0 6px rgba(160,198,255,.9))}.theme-marker{cursor:ew-resize}.theme-marker line{stroke-width:1.5;stroke-dasharray:4 4}.theme-marker path{stroke:none}.theme-marker text{font:600 10px system-ui;text-anchor:middle}.theme-marker.light line{stroke:#f3bc58}.theme-marker.light path,.theme-marker.light text{fill:#f3bc58}.theme-marker.dark line{stroke:#a992ff}.theme-marker.dark path,.theme-marker.dark text{fill:#a992ff}.preview-hit{fill:transparent;cursor:ew-resize}.time-cursor{stroke:#62d6a8;stroke-width:1.5;pointer-events:none}.time-cursor.preview{stroke:#fff;stroke-width:2}.time-dot{fill:#62d6a8;pointer-events:none}.time-dot.preview{fill:#fff}.legend{display:flex;align-items:center;gap:8px 18px;padding:0 20px 14px;color:#8d93a1;font-size:10.5px}.hint{margin-left:auto}.monitor-status{border-top:1px solid #30333e;color:#898f9d;font-size:11px}.monitor-status summary{padding:12px 20px;cursor:pointer;list-style-position:inside}.monitor-status summary strong{color:#cdd1d9}.monitor-status>div{display:grid;padding:0 20px 13px}.monitor-status>div span{display:flex;justify-content:space-between;padding:7px 0;border-top:1px solid #2d3039}.monitor-status b{color:#bfc3cc}.monitor-status em{color:#d4937e;font-style:normal}.monitor-status em.supported{color:#72c497}.monitor-status p{margin:0}@media(max-width:760px){.schedule-header{align-items:flex-start;flex-direction:column}.preview-values{justify-content:flex-start}.legend{flex-wrap:wrap}.hint{width:100%;margin-left:0}}
+  .schedule-card{border:1px solid #353845;border-radius:15px;background:#20222b;overflow:hidden}.schedule-header{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:17px 20px 5px}.schedule-header>div:first-child{display:grid;gap:3px}.eyebrow{color:#7e9edb;font-size:10px;font-weight:650;letter-spacing:.08em;text-transform:uppercase}.schedule-header strong{font-size:20px;font-variant-numeric:tabular-nums}.preview-values{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px 14px;color:#a1a6b2;font-size:10.5px}.preview-values span,.legend span{display:flex;align-items:center;gap:6px}.preview-values i,.legend i{width:16px;height:3px;border-radius:4px}.hardware{background:#4d8df7}.overlay{background:#57c9c1}.temperature{background:#f09a55}.error{margin:5px 20px;color:#ffaaa3;font-size:11px}.chart{display:block;width:100%;height:auto;min-height:300px;touch-action:none;user-select:none}.lane-bg{fill:#1b1d25}.grid{stroke:#30333e;stroke-width:1;pointer-events:none}.horizontal{stroke-dasharray:3 5}.axis{fill:#777e8d;font:10px system-ui;text-anchor:middle}.axis.y{text-anchor:end}.axis.kelvin{text-anchor:start}.lane-title{fill:#b6bbc6;font:600 11px system-ui}.lane-title.right{text-anchor:end}.curve{fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.curve.hardware{stroke:#4d8df7}.curve.overlay{stroke:#57c9c1}.curve.temperature{stroke:#f09a55}.handle{cursor:ns-resize}.handle circle{fill:#20222b;stroke-width:4;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}.handle.hardware circle{stroke:#4d8df7}.handle.overlay circle{stroke:#57c9c1}.handle.temperature circle{stroke:#f09a55}.handle:focus{outline:none}.handle:focus circle{filter:drop-shadow(0 0 6px rgba(160,198,255,.9))}.theme-marker{cursor:ew-resize}.theme-marker line{stroke-width:1.5;stroke-dasharray:4 4}.theme-marker path{stroke:none}.theme-marker text,.solar-marker text{font:600 10px system-ui;text-anchor:middle}.theme-marker.light line{stroke:#f3bc58}.theme-marker.light path,.theme-marker.light text{fill:#f3bc58}.theme-marker.dark line{stroke:#a992ff}.theme-marker.dark path,.theme-marker.dark text{fill:#a992ff}.solar-marker{pointer-events:none}.solar-marker line{stroke-width:1;stroke-dasharray:2 5;opacity:.7}.solar-marker.sunrise line{stroke:#ffd27a}.solar-marker.sunrise circle,.solar-marker.sunrise text{fill:#ffd27a}.solar-marker.sunset line{stroke:#f08a61}.solar-marker.sunset circle,.solar-marker.sunset text{fill:#f08a61}.preview-hit{fill:transparent;cursor:ew-resize}.time-cursor{stroke:#62d6a8;stroke-width:1.5;pointer-events:none}.time-cursor.preview{stroke:#fff;stroke-width:2}.time-dot{fill:#62d6a8;pointer-events:none}.time-dot.preview{fill:#fff}.legend{display:flex;align-items:center;gap:8px 18px;padding:0 20px 14px;color:#8d93a1;font-size:10.5px}.hint{margin-left:auto}.monitor-status{border-top:1px solid #30333e;color:#898f9d;font-size:11px}.monitor-status summary{padding:12px 20px;cursor:pointer;list-style-position:inside}.monitor-status summary strong{color:#cdd1d9}.monitor-status>div{display:grid;padding:0 20px 13px}.monitor-status>div span{display:flex;justify-content:space-between;padding:7px 0;border-top:1px solid #2d3039}.monitor-status b{color:#bfc3cc}.monitor-status em{color:#d4937e;font-style:normal}.monitor-status em.supported{color:#72c497}.monitor-status p{margin:0}@media(max-width:760px){.schedule-header{align-items:flex-start;flex-direction:column}.preview-values{justify-content:flex-start}.legend{flex-wrap:wrap}.hint{width:100%;margin-left:0}}
 </style>
