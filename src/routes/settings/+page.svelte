@@ -9,8 +9,23 @@
     ["schedule", "◴", "Schedule"],
     ["displays", "▣", "Displays"],
     ["exceptions", "⊘", "Exceptions"],
+    ["hotkeys", "⌨", "Hotkeys"],
     ["general", "⚙", "General"],
   ];
+
+  const hotkeyRows = [
+    ["toggle_pause", "Toggle pause", "Pause or resume Lum’s scheduled effects."],
+    ["brighter", "Brighter", "Increase current brightness by 5%."],
+    ["darker", "Darker", "Decrease current brightness by 5%."],
+    ["toggle_theme", "Toggle Windows theme", "Switch between Windows light and dark themes."],
+    ["toggle_day_night", "Toggle day / night", "Switch directly between Lum’s day and night appearance."],
+    ["boost", "Boost", "Restore full, neutral brightness."],
+  ];
+
+  const defaultHotkeys = {
+    toggle_pause: "Alt+Pause", brighter: "Alt+Up", darker: "Alt+Down",
+    toggle_theme: "Alt+F5", toggle_day_night: "Alt+F6", boost: "Alt+F7",
+  };
 
   let active = $state("overview");
   let settings = $state(null);
@@ -112,6 +127,30 @@
     settings.location.longitude = longitude;
   }
 
+  function captureHotkey(event, field) {
+    if (event.key === "Tab") return;
+    if (event.key === "Escape") { event.currentTarget.blur(); return; }
+    event.preventDefault();
+    if (event.key === "Backspace" || event.key === "Delete") {
+      settings.hotkeys[field] = "";
+      return;
+    }
+    if (["Control", "Alt", "Shift", "Meta"].includes(event.key)) return;
+    const modifiers = [];
+    if (event.ctrlKey) modifiers.push("Ctrl");
+    if (event.altKey) modifiers.push("Alt");
+    if (event.shiftKey) modifiers.push("Shift");
+    if (event.metaKey) modifiers.push("Win");
+    const numpadKey = event.code.startsWith("Numpad") && event.code !== "NumpadEnter" ? event.code : null;
+    if (!modifiers.length && !numpadKey) return;
+    const aliases = {
+      ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
+      " ": "Space", PageUp: "PageUp", PageDown: "PageDown",
+    };
+    const key = numpadKey ?? aliases[event.key] ?? (event.key.length === 1 ? event.key.toUpperCase() : event.key);
+    settings.hotkeys[field] = [...modifiers, key].join("+");
+  }
+
   function navigate(section) { active = section; }
   function phaseName(value) { return value ? value[0].toUpperCase() + value.slice(1) : "Current"; }
   let needsAttention = $derived(settings && (Math.abs(settings.location.latitude - 40.7128) < .0001 && Math.abs(settings.location.longitude + 74.006) < .0001));
@@ -210,6 +249,20 @@
             {:else}<div class="empty compact"><strong>No exceptions yet</strong><p>Add an application when accurate, neutral color is more important than the schedule.</p></div>{/each}
           </div>
         </section>
+      {:else if active === "hotkeys"}
+        <header><p>Settings</p><h1>Hotkeys</h1><span>Control Lum from anywhere with global keyboard shortcuts.</span></header>
+        <section class="card">
+          <div class="card-heading"><div><h2>Global shortcuts</h2><p>Click a field and press a shortcut. Backspace clears it; empty shortcuts are disabled.</p></div><button class="secondary" type="button" onclick={() => settings.hotkeys = { ...defaultHotkeys }}>Restore defaults</button></div>
+          <div class="hotkey-list">
+            {#each hotkeyRows as item}
+              <label>
+                <span><strong>{item[1]}</strong><small>{item[2]}</small></span>
+                <input aria-label={`${item[1]} shortcut`} placeholder="Disabled" value={settings.hotkeys[item[0]]} onkeydown={(event) => captureHotkey(event, item[0])} oninput={(event) => settings.hotkeys[item[0]] = event.currentTarget.value} />
+              </label>
+            {/each}
+          </div>
+          <p class="hotkey-note">Numpad keys can be used alone. Other shortcuts must include Ctrl, Alt, Shift, or Win. Changes apply immediately after saving.</p>
+        </section>
       {:else if active === "general"}
         <header><p>Settings</p><h1>General</h1><span>Location, Windows integration, and startup behavior.</span></header>
         <section class="card">
@@ -271,6 +324,7 @@
   .monitor-list{display:grid}.monitor-list article{display:flex;gap:14px;padding:16px 0;border-top:1px solid #2e313b}.monitor-list article:first-child{padding-top:0;border-top:0}.monitor-icon{display:grid;place-items:center;width:38px;height:34px;border-radius:8px;background:#2a2d37;color:#9da4b2}.monitor-body{flex:1}.monitor-body>div{display:flex;justify-content:space-between;gap:12px}.monitor-body span{color:#bd8b75;font-size:10px}.monitor-body span.ok{color:#72c497}.monitor-body label{display:flex;align-items:center;gap:12px;margin-top:13px}.monitor-body output{width:38px;color:#b4b8c2;font-size:11px;text-align:right}.monitor-body p{margin:8px 0 0;color:#7f8592;font-size:11px}
   .empty{display:grid;justify-items:center;padding:30px 20px;color:#818795;text-align:center}.empty>span{font-size:27px}.empty strong{margin-top:8px;color:#c4c8d0}.empty p{max-width:430px;margin:6px 0 0;font-size:11px}.empty.compact{padding:24px}.add-app{display:flex;gap:8px}.add-app input{flex:1;padding:10px 12px;border:1px solid #393d48;border-radius:9px;background:#191a21;color:white;outline:none}.add-app input:focus{border-color:#6c93d2}.add-app button,.secondary{padding:9px 13px;border:1px solid #424653;border-radius:9px;background:#2b2e38;cursor:pointer;font-size:11px}.inline-error{color:#ffaaa3;font-size:11px}.app-list{margin-top:13px}.app-list>div:not(.empty){display:flex;align-items:center;gap:11px;padding:12px 2px;border-top:1px solid #2e313b}.app-list strong{font-size:12px}.app-list button{margin-left:auto;border:0;background:transparent;color:#d78d89;cursor:pointer;font-size:11px}.app-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:#2b2e38;color:#959ba8}
   .location-summary{display:flex;align-items:center;gap:12px}.location-summary>span{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#2b3040;color:#8aaff0;font-size:18px}.location-summary>div{display:grid;gap:4px}.location-summary small{color:#858b98}.map-panel{margin-top:17px}.notice{display:grid;gap:5px;padding:16px;border-radius:12px}.notice.danger{background:#3b2327;color:#ffb5af}.loading{color:#8c929f}.error{color:#ffaaa3}
+  .hotkey-list{display:grid}.hotkey-list label{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:13px 0;border-top:1px solid #2e313b}.hotkey-list label:first-child{padding-top:0;border-top:0}.hotkey-list label>span{display:grid;gap:4px}.hotkey-list strong{font-size:12px}.hotkey-list small{color:#858b98;font-size:11px}.hotkey-list input{width:160px;padding:9px 11px;border:1px solid #3a3e49;border-radius:9px;background:#191a21;color:#dce6fa;text-align:center;outline:none;font-size:12px;font-weight:600}.hotkey-list input:focus{border-color:#6c93d2;background:#1d2230;box-shadow:0 0 0 3px rgba(108,147,210,.12)}.hotkey-list input::placeholder{color:#696f7c;font-weight:400}.hotkey-note{margin:15px 0 0;padding-top:14px;border-top:1px solid #2e313b;color:#777d8a;font-size:10.5px}
   @media(max-width:820px){.app-shell{grid-template-columns:72px minmax(0,1fr)}aside{padding-inline:9px}.logo strong,nav button:not(.active){font-size:0}.logo{justify-content:center;padding-inline:0}.logo span{font-size:25px}nav button{justify-content:center;padding:11px}nav button span{font-size:17px}.save-state{font-size:0;justify-content:center}.control-grid,.choice-grid{grid-template-columns:1fr}.field-grid{grid-template-columns:1fr}.status-hero{grid-template-columns:auto 1fr}.live-values{grid-column:1/-1;padding-left:69px}}
   @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>

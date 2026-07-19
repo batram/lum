@@ -28,6 +28,10 @@ pub struct Settings {
 
     /// Per-application pause list (process names, e.g. "photoshop.exe").
     pub pause_apps: Vec<String>,
+
+    /// User-configurable global keyboard shortcuts.
+    #[serde(default)]
+    pub hotkeys: HotkeyConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -90,6 +94,30 @@ pub struct ThemeConfig {
     pub light_at_min: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HotkeyConfig {
+    pub toggle_pause: String,
+    pub brighter: String,
+    pub darker: String,
+    pub toggle_theme: String,
+    pub toggle_day_night: String,
+    pub boost: String,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            toggle_pause: "Alt+Pause".into(),
+            brighter: "Alt+Up".into(),
+            darker: "Alt+Down".into(),
+            toggle_theme: "Alt+F5".into(),
+            toggle_day_night: "Alt+F6".into(),
+            boost: "Alt+F7".into(),
+        }
+    }
+}
+
 fn default_dark_at() -> u32 { 1200 } // 20:00
 fn default_light_at() -> u32 { 420 } // 07:00
 
@@ -129,6 +157,7 @@ impl Default for Settings {
                 "photoshop.exe".to_string(),
                 "lightroom.exe".to_string(),
             ],
+            hotkeys: HotkeyConfig::default(),
         }
     }
 }

@@ -184,15 +184,22 @@ fn get_settings() -> config::Settings {
 
 /// Tauri command: save settings from JSON.
 #[tauri::command]
-fn save_settings(settings: config::Settings) -> bool {
+fn save_settings(
+    settings: config::Settings,
+    hotkey_manager: State<'_, Arc<hotkeys::HotkeyManager>>,
+) -> Result<bool, String> {
+    hotkeys::validate_config(&settings.hotkeys)?;
     settings.save();
-    true
+    hotkey_manager.update(settings.hotkeys.clone());
+    Ok(true)
 }
 
 pub fn run() {
     // Initialize engine and settings
     let fade_engine = FadeEngine::new();
     let settings = config::Settings::load();
+    let hotkey_manager =
+        hotkeys::HotkeyManager::start(fade_engine.clone(), settings.hotkeys.clone());
     let tray_interaction = Arc::new(AtomicBool::new(false));
     let tray_interaction_for_setup = tray_interaction.clone();
     let last_focus_dismissal = Arc::new(Mutex::new(None::<Instant>));
@@ -202,6 +209,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(fade_engine.clone())
         .manage(settings)
+        .manage(hotkey_manager)
         .invoke_handler(tauri::generate_handler![
             get_app_state,
             set_automatic,
@@ -234,9 +242,6 @@ pub fn run() {
 
             // Start the fade engine tick loop
             let _handle = fade_engine.start();
-
-            // Start global hotkey listener
-            let _hotkey_handle = hotkeys::start_hotkey_listener(fade_engine.clone());
 
             // Enumerate DDC/CI monitors
             ddcci::enumerate_monitors();

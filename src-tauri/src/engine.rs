@@ -213,6 +213,17 @@ impl FadeEngine {
         );
     }
 
+    /// Adjust effective brightness relative to its current value while preserving warmth.
+    pub fn step_brightness(&self, delta_pct: i16) {
+        let state = self.get_state();
+        let target = stepped_brightness(state.brightness_pct, delta_pct) as i16;
+        let temperature_offset = state.color_temp_k as i32 - state.scheduled_color_temp_k as i32;
+        self.set_adjustments(
+            target - state.scheduled_brightness_pct as i16,
+            temperature_offset,
+        );
+    }
+
     pub fn start(self: &Arc<Self>) -> thread::JoinHandle<()> {
         let engine = Arc::clone(self);
         thread::spawn(move || {
@@ -370,6 +381,10 @@ fn lerp_brightness(settings: &Settings, intensity: f64) -> u8 {
     (day + (night - day) * intensity).round().clamp(0.0, 100.0) as u8
 }
 
+fn stepped_brightness(current: u8, delta_pct: i16) -> u8 {
+    (current as i16 + delta_pct).clamp(0, 100) as u8
+}
+
 fn effective_sun(settings: &Settings, date: chrono::NaiveDate) -> sun::SunTimes {
     let offset = Local::now().offset().local_minus_utc() as f64 / 3600.0;
     let mut value = sun::calculate_sun_times(
@@ -433,6 +448,13 @@ mod tests {
         settings.brightness.night_percent = 0;
         assert_eq!(lerp_brightness(&settings, -1.0), 100);
         assert_eq!(lerp_brightness(&settings, 2.0), 0);
+    }
+
+    #[test]
+    fn brightness_step_target_is_clamped() {
+        assert_eq!(stepped_brightness(98, 5), 100);
+        assert_eq!(stepped_brightness(2, -5), 0);
+        assert_eq!(stepped_brightness(50, 5), 55);
     }
 
     #[test]
