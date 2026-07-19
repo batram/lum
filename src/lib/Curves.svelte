@@ -138,6 +138,16 @@
     dragging = null;
   }
 
+  function handleKey(kind, event) {
+    const direction = event.key === "ArrowUp" || event.key === "ArrowRight" ? 1 : event.key === "ArrowDown" || event.key === "ArrowLeft" ? -1 : 0;
+    if (!direction && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    if (kind === "brightness-day") settings.brightness.day_percent = event.key === "Home" ? 30 : event.key === "End" ? 100 : Math.max(30, Math.min(100, settings.brightness.day_percent + direction));
+    if (kind === "brightness-night") settings.brightness.night_percent = event.key === "Home" ? 10 : event.key === "End" ? 100 : Math.max(10, Math.min(100, settings.brightness.night_percent + direction));
+    if (kind === "warmth-day") settings.color.day_temp_k = event.key === "Home" ? 4000 : event.key === "End" ? 10000 : Math.max(4000, Math.min(10000, settings.color.day_temp_k + direction * 100));
+    if (kind === "warmth-night") settings.color.night_temp_k = event.key === "Home" ? 1800 : event.key === "End" ? 5000 : Math.max(1800, Math.min(5000, settings.color.night_temp_k + direction * 100));
+  }
+
   function formatClock(date) {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
@@ -177,17 +187,17 @@
       <path d={brightnessPath} class="curve brightness" />
       <path d={warmthPath} class="curve warmth" />
 
-      <g class="handle brightness" role="slider" aria-label="Night brightness" aria-valuemin="10" aria-valuemax="100" aria-valuenow={settings.brightness.night_percent} tabindex="0" onpointerdown={(event) => startDrag("brightness-night", event)}>
-        <circle cx={xForMinute(60)} cy={yForPercent(settings.brightness.night_percent)} r="9" /><title>Night brightness: {settings.brightness.night_percent}%</title>
+      <g class="handle brightness" role="slider" aria-label="Night brightness" aria-valuemin="10" aria-valuemax="100" aria-valuenow={settings.brightness.night_percent} tabindex="0" onkeydown={(event) => handleKey("brightness-night", event)} onpointerdown={(event) => startDrag("brightness-night", event)}>
+        <circle cx={xForMinute(60)} cy={yForPercent(settings.brightness.night_percent)} r="11" /><title>Night brightness: {settings.brightness.night_percent}%</title>
       </g>
-      <g class="handle brightness" role="slider" aria-label="Day brightness" aria-valuemin="30" aria-valuemax="100" aria-valuenow={settings.brightness.day_percent} tabindex="0" onpointerdown={(event) => startDrag("brightness-day", event)}>
-        <circle cx={xForMinute(720)} cy={yForPercent(settings.brightness.day_percent)} r="9" /><title>Day brightness: {settings.brightness.day_percent}%</title>
+      <g class="handle brightness" role="slider" aria-label="Day brightness" aria-valuemin="30" aria-valuemax="100" aria-valuenow={settings.brightness.day_percent} tabindex="0" onkeydown={(event) => handleKey("brightness-day", event)} onpointerdown={(event) => startDrag("brightness-day", event)}>
+        <circle cx={xForMinute(720)} cy={yForPercent(settings.brightness.day_percent)} r="11" /><title>Day brightness: {settings.brightness.day_percent}%</title>
       </g>
-      <g class="handle warmth" role="slider" aria-label="Night color warmth" aria-valuemin="1800" aria-valuemax="5000" aria-valuenow={settings.color.night_temp_k} tabindex="0" onpointerdown={(event) => startDrag("warmth-night", event)}>
-        <circle cx={xForMinute(90)} cy={yForPercent(kelvinToWarmth(settings.color.night_temp_k))} r="9" /><title>Night color: {settings.color.night_temp_k}K</title>
+      <g class="handle warmth" role="slider" aria-label="Night color warmth" aria-valuemin="1800" aria-valuemax="5000" aria-valuenow={settings.color.night_temp_k} tabindex="0" onkeydown={(event) => handleKey("warmth-night", event)} onpointerdown={(event) => startDrag("warmth-night", event)}>
+        <circle cx={xForMinute(90)} cy={yForPercent(kelvinToWarmth(settings.color.night_temp_k))} r="11" /><title>Night color: {settings.color.night_temp_k}K</title>
       </g>
-      <g class="handle warmth" role="slider" aria-label="Day color warmth" aria-valuemin="4000" aria-valuemax="10000" aria-valuenow={settings.color.day_temp_k} tabindex="0" onpointerdown={(event) => startDrag("warmth-day", event)}>
-        <circle cx={xForMinute(750)} cy={yForPercent(kelvinToWarmth(settings.color.day_temp_k))} r="9" /><title>Day color: {settings.color.day_temp_k}K</title>
+      <g class="handle warmth" role="slider" aria-label="Day color warmth" aria-valuemin="4000" aria-valuemax="10000" aria-valuenow={settings.color.day_temp_k} tabindex="0" onkeydown={(event) => handleKey("warmth-day", event)} onpointerdown={(event) => startDrag("warmth-day", event)}>
+        <circle cx={xForMinute(750)} cy={yForPercent(kelvinToWarmth(settings.color.day_temp_k))} r="11" /><title>Day color: {settings.color.day_temp_k}K</title>
       </g>
     {/if}
 
@@ -225,6 +235,8 @@
   .curve { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
   .curve.brightness { stroke: #3578e5; } .curve.warmth { stroke: #ef7b45; }
   .handle { cursor: ns-resize; }
+  .handle:focus { outline: none; }
+  .handle:focus circle { filter: drop-shadow(0 0 5px rgba(142,184,255,.9)); }
   .handle circle { fill: white; stroke-width: 4; filter: drop-shadow(0 2px 3px rgba(0,0,0,.18)); }
   .handle.brightness circle { stroke: #3578e5; } .handle.warmth circle { stroke: #ef7b45; }
   .current { stroke: #14a673; stroke-width: 2; pointer-events: none; }

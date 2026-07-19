@@ -4,559 +4,273 @@
   import MapPicker from "$lib/MapPicker.svelte";
   import Curves from "$lib/Curves.svelte";
 
-  let settings = $state(null);
-  let monitors = $state([]);
-  let autostart = $state(false);
-  let newApp = $state("");
-  let monitorBrightness = $state([]);
-  let saveIndicator = $state("");
-  let loadError = $state("");
+  const sections = [
+    ["overview", "⌂", "Overview"],
+    ["schedule", "◴", "Schedule"],
+    ["displays", "▣", "Displays"],
+    ["exceptions", "⊘", "Exceptions"],
+    ["general", "⚙", "General"],
+  ];
 
-  let debounceTimer = null;
-  let brightnessInterval = null;
+  let active = $state("overview");
+  let settings = $state(null);
+  let state = $state(null);
+  let monitors = $state([]);
+  let monitorBrightness = $state([]);
+  let autostart = $state(false);
+  let saveStatus = $state("Loading…");
+  let loadError = $state("");
+  let appError = $state("");
+  let newApp = $state("");
+  let editingLocation = $state(false);
+  let ready = $state(false);
+  let lastSaved = "";
+  let saveTimer;
 
   onMount(() => {
     let disposed = false;
     (async () => {
       try {
-        settings = await invoke("get_settings");
-        const [monitorResult, autostartResult] = await Promise.allSettled([
-          invoke("get_monitors"), invoke("get_autostart")
+        const [loadedSettings, liveState, monitorResult, autostartResult] = await Promise.all([
+          invoke("get_settings"), invoke("get_app_state"),
+          invoke("get_monitors").catch(() => []), invoke("get_autostart").catch(() => false),
         ]);
         if (disposed) return;
-        if (monitorResult.status === "fulfilled") monitors = monitorResult.value;
-        if (autostartResult.status === "fulfilled") autostart = autostartResult.value;
+        settings = loadedSettings;
+        state = liveState;
+        monitors = monitorResult;
+        autostart = autostartResult;
+        lastSaved = JSON.stringify(loadedSettings);
+        ready = true;
+        saveStatus = "Saved";
         await pollBrightness();
-        brightnessInterval = setInterval(pollBrightness, 3000);
-      } catch (error) {
-        if (!disposed) loadError = `Settings could not be loaded: ${error}`;
+      } catch (reason) {
+        loadError = `Lum could not load settings: ${reason}`;
       }
     })();
+    const stateInterval = setInterval(async () => {
+      try { state = await invoke("get_app_state"); } catch { /* status is supplementary */ }
+    }, 1000);
+    const monitorInterval = setInterval(pollBrightness, 4000);
     return () => {
       disposed = true;
-      clearInterval(brightnessInterval);
+      clearInterval(stateInterval); clearInterval(monitorInterval); clearTimeout(saveTimer);
     };
   });
 
+  $effect(() => {
+    if (!ready || !settings) return;
+    const serialized = JSON.stringify(settings);
+    if (serialized === lastSaved) return;
+    clearTimeout(saveTimer);
+    saveStatus = "Saving…";
+    saveTimer = setTimeout(async () => {
+      try {
+        await invoke("save_settings", { settings: JSON.parse(serialized) });
+        lastSaved = serialized;
+        saveStatus = "Saved";
+      } catch (reason) {
+        saveStatus = `Couldn’t save · ${reason}`;
+      }
+    }, 420);
+  });
+
   async function pollBrightness() {
+    if (!monitors.length) return;
     try {
       const levels = await invoke("get_all_brightness");
-      monitorBrightness = levels.map((v, i) =>
-        v != null ? v : (monitorBrightness[i] ?? 100)
-      );
-    } catch {
-      // DDC/CI read failed silently
-    }
+      monitorBrightness = monitors.map((monitor, index) => levels[index] ?? monitorBrightness[index] ?? 50);
+    } catch { /* DDC/CI reads can fail while monitors sleep */ }
   }
 
-  // Auto-save settings with debounce whenever settings change
-  $effect(() => {
-    if (!settings) return;
-    // Touch all reactive properties so this effect re-runs on any change
-    JSON.stringify(settings);
+  function setMonitorBrightness(index, value) {
+    monitorBrightness[index] = Number(value);
+    invoke("set_monitor_brightness", { index, percent: Number(value) });
+  }
 
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(async () => {
-      try {
-        await invoke("save_settings", { settings });
-        saveIndicator = "saved";
-      } catch {
-        saveIndicator = "error";
-      }
-      setTimeout(() => (saveIndicator = ""), 1800);
-    }, 500);
-  });
+  function addApp() {
+    appError = "";
+    let value = newApp.trim().toLowerCase();
+    if (!value) return;
+    if (!value.endsWith(".exe")) value += ".exe";
+    if (!/^[^\\/:*?"<>|]+\.exe$/.test(value)) { appError = "Enter a valid Windows executable name."; return; }
+    if (settings.pause_apps.some((item) => item.toLowerCase() === value)) { appError = "That application is already listed."; return; }
+    settings.pause_apps.push(value);
+    newApp = "";
+  }
+
+  function removeApp(value) {
+    settings.pause_apps = settings.pause_apps.filter((item) => item !== value);
+  }
 
   async function toggleAutostart() {
     autostart = await invoke("toggle_autostart");
   }
 
-  function addApp() {
-    const name = newApp.trim().toLowerCase();
-    if (name && !settings.pause_apps.includes(name)) {
-      settings.pause_apps = [...settings.pause_apps, name.endsWith(".exe") ? name : name + ".exe"];
-    }
-    newApp = "";
+  function pickLocation(latitude, longitude) {
+    settings.location.latitude = latitude;
+    settings.location.longitude = longitude;
   }
 
-  function removeApp(app) {
-    settings.pause_apps = settings.pause_apps.filter((a) => a !== app);
-  }
-
-  // DDC/CI: set monitor brightness immediately on slider input
-  function onMonitorBrightness(index, value) {
-    monitorBrightness[index] = value;
-    invoke("set_monitor_brightness", { index, percent: value });
-  }
+  function navigate(section) { active = section; }
+  function phaseName(value) { return value ? value[0].toUpperCase() + value.slice(1) : "Current"; }
+  let needsAttention = $derived(settings && (Math.abs(settings.location.latitude - 40.7128) < .0001 && Math.abs(settings.location.longitude + 74.006) < .0001));
 </script>
 
-<main class="container">
-  <header>
-    <a href="/" class="back">← Status</a>
-    <div>
-      <h1>Settings</h1>
-      <p>Shape how your displays change through the day.</p>
-    </div>
-  </header>
+<svelte:head><title>Lum Settings</title></svelte:head>
 
-  {#if settings}
-    <!-- 24h Curves Overview -->
-    <section class="curves-section">
-      <h2>24-hour schedule</h2>
-      <p class="hint">Drag the blue and orange circles vertically to set the night and day levels.</p>
-      <Curves {settings} />
-    </section>
+<div class="app-shell">
+  <aside>
+    <div class="logo"><span>◒</span><strong>Lum</strong></div>
+    <nav aria-label="Settings sections">
+      {#each sections as item}
+        <button class:active={active === item[0]} type="button" onclick={() => navigate(item[0])}>
+          <span aria-hidden="true">{item[1]}</span>{item[2]}
+        </button>
+      {/each}
+    </nav>
+    <div class="save-state" class:error={saveStatus.startsWith("Couldn’t")}><i></i>{saveStatus}</div>
+  </aside>
 
-    <!-- Rendering Engine -->
-    <section>
-      <h2>Rendering Engine</h2>
-      <div class="row">
-        <label>
-          <input type="radio" bind:group={settings.engine} value="gamma_ramps" />
-          Gamma Ramps (recommended)
-        </label>
-        <label>
-          <input type="radio" bind:group={settings.engine} value="night_light" />
-          Night Light (registry)
-        </label>
-      </div>
-    </section>
-
-    <!-- Location -->
-    <section>
-      <h2>Location</h2>
-      <MapPicker
-        lat={settings.location.latitude}
-        lng={settings.location.longitude}
-        onPick={(la, ln) => {
-          settings.location.latitude = la;
-          settings.location.longitude = ln;
-        }}
-      />
-    </section>
-
-    <!-- Fade Timing -->
-    <section>
-      <h2>Fade Timing</h2>
-      <div class="grid">
-        <label>
-          Evening offset (min before sunset)
-          <input type="number" bind:value={settings.fade.evening_offset_min} />
-        </label>
-        <label>
-          Morning offset (min after sunrise)
-          <input type="number" bind:value={settings.fade.morning_offset_min} />
-        </label>
-        <label>
-          Fade duration (minutes)
-          <input type="number" min="5" max="180" bind:value={settings.fade.fade_duration_min} />
-        </label>
-      </div>
-      <label class="checkbox">
-        <input type="checkbox" bind:checked={settings.fade.use_civil_twilight} />
-        Use civil twilight (-6°) instead of fixed offsets
-      </label>
-    </section>
-
-    <!-- Color Temperature -->
-    <section>
-      <h2>Color Temperature</h2>
-      <div class="grid">
-        <label>
-          Day temperature ({settings.color.day_temp_k}K)
-          <input type="range" min="4000" max="10000" step="100" bind:value={settings.color.day_temp_k} />
-        </label>
-        <label>
-          Night temperature ({settings.color.night_temp_k}K)
-          <input type="range" min="1800" max="5000" step="100" bind:value={settings.color.night_temp_k} />
-        </label>
-      </div>
-    </section>
-
-    <!-- Brightness -->
-    <section>
-      <h2>Brightness</h2>
-      <div class="grid">
-        <label>
-          Day brightness ({settings.brightness.day_percent}%)
-          <input type="range" min="30" max="100" bind:value={settings.brightness.day_percent} />
-        </label>
-        <label>
-          Night brightness ({settings.brightness.night_percent}%)
-          <input type="range" min="10" max="100" bind:value={settings.brightness.night_percent} />
-        </label>
-      </div>
-      <label class="checkbox">
-        <input type="checkbox" bind:checked={settings.brightness.linked_to_color} />
-        Link brightness curve to color curve
-      </label>
-    </section>
-
-    <!-- Theme -->
-    <section>
-      <h2>Windows Theme</h2>
-      <label class="checkbox">
-        <input type="checkbox" bind:checked={settings.theme.auto_switch} />
-        Auto-switch dark/light theme with the sun
-      </label>
-      <label class="checkbox">
-        <input type="checkbox" bind:checked={settings.theme.dark_at_night} />
-        Use dark theme at night
-      </label>
-    </section>
-
-    <!-- Per-App Pause List -->
-    <section>
-      <h2>Per-App Pause List</h2>
-      <p class="hint">Effects pause while these apps are focused.</p>
-      <ul class="app-list">
-        {#each settings.pause_apps as app}
-          <li>
-            <span>{app}</span>
-            <button class="remove" onclick={() => removeApp(app)}>×</button>
-          </li>
-        {/each}
-      </ul>
-      <div class="add-row">
-        <input
-          type="text"
-          placeholder="e.g. photoshop.exe"
-          bind:value={newApp}
-          onkeydown={(e) => e.key === "Enter" && addApp()}
-        />
-        <button onclick={addApp}>Add</button>
-      </div>
-    </section>
-
-    <!-- Monitors -->
-    <section>
-      <h2>Monitors (DDC/CI)</h2>
-      {#if monitors.length === 0}
-        <p class="hint">No DDC/CI-capable monitors detected.</p>
-      {:else}
-        <ul class="monitor-list">
-          {#each monitors as mon, i}
-            <li>
-              <div class="mon-header">
-                <span class="mon-name">{mon.description || `Monitor ${mon.index + 1}`}</span>
-                <span class="badge" class:ok={mon.supports_brightness} class:no={!mon.supports_brightness}>
-                  {mon.supports_brightness ? `${mon.brightness_min}–${mon.brightness_max}` : "No DDC/CI"}
-                </span>
-              </div>
-              {#if mon.supports_brightness}
-                <div class="mon-slider">
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={monitorBrightness[i] ?? 100}
-                    oninput={(e) => onMonitorBrightness(i, +e.target.value)}
-                  />
-                  <span class="mon-val">{monitorBrightness[i] ?? 100}%</span>
-                </div>
-              {/if}
-            </li>
-          {/each}
-        </ul>
+  <main>
+    {#if loadError}
+      <div class="notice danger" role="alert"><strong>Settings unavailable</strong><span>{loadError}</span></div>
+    {:else if !settings}
+      <div class="loading">Loading Lum…</div>
+    {:else}
+      {#if active === "overview"}
+        <header><p>Settings</p><h1>Overview</h1><span>Your display, at a glance.</span></header>
+        {#if needsAttention}
+          <button class="setup-banner" type="button" onclick={() => { active = "general"; editingLocation = true; }}>
+            <span class="setup-icon">⌖</span><span><strong>Confirm your location</strong><small>Lum is using the default location. Set yours for accurate sunrise and sunset times.</small></span><b>Set up →</b>
+          </button>
+        {/if}
+        <section class="status-hero">
+          <div class="status-orb" class:night={(state?.intensity ?? 0) > .45}></div>
+          <div><span class="eyebrow">Right now</span><h2>{phaseName(state?.phase)} light</h2><p>{state?.automatic ? `${state?.next_transition_label} at ${state?.next_transition_time}` : "Holding your current appearance"}</p></div>
+          <div class="live-values"><span><b>{state?.brightness_pct ?? "—"}%</b>Brightness</span><span><b>{state?.color_temp_k ?? "—"}K</b>Temperature</span></div>
+        </section>
+        <div class="overview-grid">
+          <button class="summary-card" type="button" onclick={() => navigate("schedule")}><span class="card-icon blue">◴</span><span><strong>Sun schedule</strong><small>Sunrise {state?.sunrise} · Sunset {state?.sunset}</small></span><b>›</b></button>
+          <button class="summary-card" type="button" onclick={() => navigate("displays")}><span class="card-icon violet">▣</span><span><strong>{monitors.length || "No"} display{monitors.length === 1 ? "" : "s"}</strong><small>{monitors.some((m) => m.supports_brightness) ? "Hardware brightness available" : "Using gamma brightness"}</small></span><b>›</b></button>
+          <button class="summary-card" type="button" onclick={() => navigate("exceptions")}><span class="card-icon amber">⊘</span><span><strong>App exceptions</strong><small>{settings.pause_apps.length ? `${settings.pause_apps.length} configured` : "No apps configured"}</small></span><b>›</b></button>
+        </div>
+      {:else if active === "schedule"}
+        <header><p>Settings</p><h1>Schedule</h1><span>Shape how your displays change through the day.</span></header>
+        <Curves {settings} />
+        <section class="card">
+          <div class="card-heading"><div><h2>Day and night levels</h2><p>These controls mirror the handles in the chart.</p></div></div>
+          <div class="control-grid">
+            <label><span>Day brightness <b>{settings.brightness.day_percent}%</b></span><input type="range" min="30" max="100" bind:value={settings.brightness.day_percent} /></label>
+            <label><span>Night brightness <b>{settings.brightness.night_percent}%</b></span><input type="range" min="10" max="100" bind:value={settings.brightness.night_percent} /></label>
+            <label><span>Day temperature <b>{settings.color.day_temp_k}K</b></span><input class="warm" type="range" min="4000" max="10000" step="100" bind:value={settings.color.day_temp_k} /></label>
+            <label><span>Night temperature <b>{settings.color.night_temp_k}K</b></span><input class="warm" type="range" min="1800" max="5000" step="100" bind:value={settings.color.night_temp_k} /></label>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-heading"><div><h2>Transition timing</h2><p>Fine-tune when gradual changes begin and end.</p></div></div>
+          <div class="field-grid">
+            <label><span>Evening offset</span><div class="number-field"><input type="number" min="-240" max="240" bind:value={settings.fade.evening_offset_min} /><em>min before sunset</em></div></label>
+            <label><span>Morning offset</span><div class="number-field"><input type="number" min="-240" max="240" bind:value={settings.fade.morning_offset_min} /><em>min after sunrise</em></div></label>
+            <label><span>Fade duration</span><div class="number-field"><input type="number" min="5" max="240" bind:value={settings.fade.fade_duration_min} /><em>minutes</em></div></label>
+          </div>
+          <label class="toggle-row"><span><strong>Use civil twilight</strong><small>Begin changes when the sun is 6° below the horizon.</small></span><input type="checkbox" bind:checked={settings.fade.use_civil_twilight} /></label>
+        </section>
+      {:else if active === "displays"}
+        <header><p>Settings</p><h1>Displays</h1><span>Choose how Lum controls color and brightness.</span></header>
+        <section class="card">
+          <div class="card-heading"><div><h2>Rendering engine</h2><p>Gamma ramps work on the widest range of Windows displays.</p></div></div>
+          <div class="choice-grid">
+            <label class:chosen={settings.engine === "gamma_ramps"}><input type="radio" bind:group={settings.engine} value="gamma_ramps" /><span><strong>Gamma ramps</strong><small>Recommended · instant and reliable</small></span><i>✓</i></label>
+            <label class:chosen={settings.engine === "night_light"}><input type="radio" bind:group={settings.engine} value="night_light" /><span><strong>Windows Night Light</strong><small>Registry integration · experimental</small></span><i>✓</i></label>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-heading"><div><h2>Connected displays</h2><p>Hardware controls appear when a monitor supports DDC/CI.</p></div><span class="count">{monitors.length}</span></div>
+          {#if monitors.length}
+            <div class="monitor-list">
+              {#each monitors as monitor, index}
+                <article>
+                  <div class="monitor-icon">▰</div><div class="monitor-body"><div><strong>{monitor.description || `Display ${index + 1}`}</strong><span class:ok={monitor.supports_brightness}>{monitor.supports_brightness ? "DDC/CI available" : "Gamma control"}</span></div>
+                  {#if monitor.supports_brightness}<label><input type="range" min="0" max="100" value={monitorBrightness[index] ?? 50} oninput={(event) => setMonitorBrightness(monitor.index, event.currentTarget.value)} /><output>{monitorBrightness[index] ?? "—"}%</output></label>{:else}<p>This display does not expose hardware brightness. Lum will use gamma brightness instead.</p>{/if}</div>
+                </article>
+              {/each}
+            </div>
+          {:else}<div class="empty"><span>▣</span><strong>No controllable displays found</strong><p>Lum will continue using gamma ramps. Check that DDC/CI is enabled in your monitor’s menu.</p></div>{/if}
+        </section>
+      {:else if active === "exceptions"}
+        <header><p>Settings</p><h1>Exceptions</h1><span>Temporarily restore neutral color for color-sensitive work.</span></header>
+        <section class="card">
+          <div class="card-heading"><div><h2>Pause for applications</h2><p>Effects turn off while a listed application is focused and return automatically afterward.</p></div></div>
+          <form class="add-app" onsubmit={(event) => { event.preventDefault(); addApp(); }}><input aria-label="Application executable" placeholder="Application name, e.g. photoshop.exe" bind:value={newApp} /><button type="submit">Add application</button></form>
+          {#if appError}<p class="inline-error" role="alert">{appError}</p>{/if}
+          <div class="app-list">
+            {#each settings.pause_apps as app}
+              <div><span class="app-icon">◇</span><strong>{app}</strong><button type="button" aria-label={`Remove ${app}`} onclick={() => removeApp(app)}>Remove</button></div>
+            {:else}<div class="empty compact"><strong>No exceptions yet</strong><p>Add an application when accurate, neutral color is more important than the schedule.</p></div>{/each}
+          </div>
+        </section>
+      {:else if active === "general"}
+        <header><p>Settings</p><h1>General</h1><span>Location, Windows integration, and startup behavior.</span></header>
+        <section class="card">
+          <div class="card-heading"><div><h2>Location</h2><p>Lum uses coordinates only to calculate local solar times.</p></div><button class="secondary" type="button" onclick={() => editingLocation = !editingLocation}>{editingLocation ? "Done" : "Change location"}</button></div>
+          <div class="location-summary"><span>⌖</span><div><strong>{settings.location.latitude.toFixed(2)}°, {settings.location.longitude.toFixed(2)}°</strong><small>Sunrise {state?.sunrise} · Sunset {state?.sunset}</small></div></div>
+          {#if editingLocation}<div class="map-panel"><MapPicker lat={settings.location.latitude} lng={settings.location.longitude} onPick={pickLocation} /></div>{/if}
+        </section>
+        <section class="card rows">
+          <label class="toggle-row"><span><strong>Switch Windows theme automatically</strong><small>Match the light and dark Windows theme to your sun schedule.</small></span><input type="checkbox" bind:checked={settings.theme.auto_switch} /></label>
+          <label class="toggle-row" class:disabled={!settings.theme.auto_switch}><span><strong>Use dark theme at night</strong><small>Use the light theme during daytime hours.</small></span><input type="checkbox" disabled={!settings.theme.auto_switch} bind:checked={settings.theme.dark_at_night} /></label>
+          <label class="toggle-row"><span><strong>Start Lum with Windows</strong><small>Launch quietly in the notification area after sign-in.</small></span><input type="checkbox" checked={autostart} onchange={toggleAutostart} /></label>
+        </section>
       {/if}
-    </section>
-
-    <!-- Auto-start -->
-    <section>
-      <h2>Startup</h2>
-      <label class="checkbox">
-        <input type="checkbox" checked={autostart} onchange={toggleAutostart} />
-        Start Lum with Windows
-      </label>
-    </section>
-
-    <!-- Auto-save indicator -->
-    {#if saveIndicator}
-      <div class="save-toast" class:error={saveIndicator === "error"}>{saveIndicator === "saved" ? "✓ Saved" : "Could not save settings"}</div>
     {/if}
-  {:else if loadError}
-    <p class="load-error">{loadError}</p>
-  {:else}
-    <p>Loading settings...</p>
-  {/if}
-</main>
+  </main>
+</div>
 
 <style>
-  .container {
-    padding: 1.5rem 2rem;
-    max-width: 980px;
-    margin: 0 auto;
-    font-family: "Segoe UI", system-ui, sans-serif;
-    font-size: 14px;
-    color: #1a1a2e;
-  }
-
-  .curves-section {
-    grid-column: 1 / -1;
-  }
-
-  header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .back {
-    color: #646cff;
-    text-decoration: none;
-    font-size: 0.85rem;
-  }
-
-  h1 {
-    font-size: 1.55rem;
-    margin: 0;
-  }
-
-  header p { margin: 0.15rem 0 0; color: #7b8190; font-size: 0.85rem; }
-
-  h2 {
-    font-size: 0.9rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: #888;
-    margin: 0 0 0.6rem;
-  }
-
-  section {
-    margin-bottom: 1rem;
-    padding: 1.15rem 1.25rem;
-    border: 1px solid #e5e7ec;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.72);
-  }
-
-  .grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-  }
-
-  .grid label,
-  .row label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.82rem;
-    color: #555;
-  }
-
-  .row {
-    display: flex;
-    gap: 1.5rem;
-  }
-
-  .row label {
-    flex-direction: row;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  input[type="number"],
-  input[type="text"] {
-    padding: 0.4rem 0.6rem;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    width: 100%;
-  }
-
-  input[type="range"] {
-    width: 100%;
-  }
-
-  .checkbox {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-    font-size: 0.85rem;
-    color: #555;
-  }
-
-  .hint {
-    font-size: 0.8rem;
-    color: #999;
-    margin: 0 0 0.5rem;
-  }
-
-  .app-list {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 0.5rem;
-  }
-
-  .app-list li {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.35rem 0.6rem;
-    background: #f5f5f5;
-    border-radius: 6px;
-    margin-bottom: 0.3rem;
-    font-size: 0.85rem;
-  }
-
-  .remove {
-    background: none;
-    border: none;
-    color: #e44;
-    font-size: 1.1rem;
-    cursor: pointer;
-    padding: 0 0.3rem;
-  }
-
-  .add-row {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .add-row input {
-    flex: 1;
-  }
-
-  .add-row button {
-    padding: 0.4rem 1rem;
-    border: none;
-    border-radius: 6px;
-    background: #2d2d3a;
-    color: #fff;
-    font-size: 0.82rem;
-    cursor: pointer;
-  }
-
-  .monitor-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  .monitor-list li {
-    padding: 0.5rem 0;
-  }
-
-  .mon-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .mon-slider {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    margin-top: 0.35rem;
-  }
-
-  .mon-slider input[type="range"] {
-    flex: 1;
-  }
-
-  .mon-val {
-    font-size: 0.8rem;
-    color: #666;
-    min-width: 2.5rem;
-    text-align: right;
-  }
-
-  .mon-name {
-    font-size: 0.85rem;
-  }
-
-  .badge {
-    font-size: 0.75rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 4px;
-  }
-
-  .badge.ok {
-    background: #e6f9e6;
-    color: #2a7a2a;
-  }
-
-  .badge.no {
-    background: #fde8e8;
-    color: #a33;
-  }
-
-  .save-toast {
-    position: fixed;
-    bottom: 1.5rem;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #2d2d3a;
-    color: #fff;
-    padding: 0.4rem 1.2rem;
-    border-radius: 6px;
-    font-size: 0.82rem;
-    animation: fadeIn 0.2s ease;
-  }
-
-  .save-toast.error { background: #a63838; }
-  .load-error { padding: 1rem; border-radius: 8px; background: #fff0f0; color: #9b2929; }
-
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateX(-50%) translateY(4px); }
-    to { opacity: 1; transform: translateX(-50%) translateY(0); }
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .container {
-      color: #e8e6e3;
-    }
-
-    h2 {
-      color: #999;
-    }
-
-    section {
-      border-color: #343646;
-      background: rgba(36, 37, 53, 0.8);
-    }
-
-    .grid label,
-    .row label,
-    .checkbox {
-      color: #bbb;
-    }
-
-    input[type="number"],
-    input[type="text"] {
-      background: #2a2a3e;
-      border-color: #444;
-      color: #eee;
-    }
-
-    .app-list li {
-      background: #2a2a3e;
-    }
-
-    .badge.ok {
-      background: #1a3a1a;
-      color: #6d6;
-    }
-
-    .badge.no {
-      background: #3a1a1a;
-      color: #d66;
-    }
-
-    .add-row button {
-      background: #3a3a50;
-    }
-
-    .mon-val {
-      color: #aaa;
-    }
-
-    .save-toast {
-      background: #3a3a50;
-    }
-  }
+  :global(*) { box-sizing: border-box; }
+  :global(html) { color-scheme: dark; background: #171820; }
+  :global(body) { margin: 0; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; color: #eef0f5; background: #171820; }
+  :global(button), :global(input) { font: inherit; }
+  :global(button) { color: inherit; }
+  .app-shell { display: grid; grid-template-columns: 220px minmax(0,1fr); min-height: 100vh; }
+  aside { position: sticky; top: 0; display: flex; flex-direction: column; height: 100vh; padding: 24px 14px 16px; border-right: 1px solid #2d303a; background: #1d1e27; }
+  .logo { display: flex; align-items: center; gap: 10px; padding: 0 12px 27px; font-size: 17px; }
+  .logo span { color: #ffc45c; font-size: 26px; transform: rotate(-16deg); }
+  nav { display: grid; gap: 3px; }
+  nav button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; border-radius: 9px; background: transparent; color: #a7abb7; text-align: left; cursor: pointer; font-size: 13px; }
+  nav button span { width: 18px; color: #858b99; font-size: 16px; text-align: center; }
+  nav button:hover { background: #252732; color: #f0f1f5; }
+  nav button.active { background: #2c3040; color: white; }
+  nav button.active span { color: #8cb4ff; }
+  .save-state { display: flex; align-items: center; gap: 7px; margin: auto 12px 0; color: #7f8593; font-size: 11px; }
+  .save-state i { width: 6px; height: 6px; border-radius: 50%; background: #67c796; }
+  .save-state.error { color: #ffaaa3; }.save-state.error i { background: #ef7770; }
+  main { width: 100%; max-width: 1040px; padding: 42px clamp(28px,5vw,64px) 72px; }
+  header { margin-bottom: 25px; }
+  header p { margin: 0 0 7px; color: #7e9edb; font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+  h1 { margin: 0 0 7px; font-size: 28px; line-height: 1.15; letter-spacing: -.035em; }
+  header > span { color: #9297a4; font-size: 13px; }
+  h2 { margin: 0; font-size: 15px; letter-spacing: -.01em; }
+  .setup-banner { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; width: 100%; margin-bottom: 16px; padding: 15px; border: 1px solid rgba(226,172,80,.26); border-radius: 12px; background: rgba(226,172,80,.075); text-align: left; cursor: pointer; }
+  .setup-banner > span:nth-child(2) { display: grid; gap: 3px; }.setup-banner small { color: #a7a18f; }.setup-banner b { color: #efbd68; font-size: 12px; }.setup-icon { font-size: 20px; color: #efbd68; }
+  .status-hero { display: grid; grid-template-columns: auto 1fr auto; gap: 17px; align-items: center; padding: 22px; border: 1px solid #323540; border-radius: 15px; background: linear-gradient(145deg,#242630,#20212a); }
+  .status-orb { width: 52px; height: 52px; border-radius: 50%; background: radial-gradient(circle at 34% 33%,#fff0b8,#e8a746 65%,#9d6324); box-shadow: 0 0 30px rgba(234,170,68,.13); }.status-orb.night { background: radial-gradient(circle at 34% 33%,#f8e6ab,#dca348 60%,#272934 62%); }
+  .eyebrow { color: #858b99; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }.status-hero h2 { margin: 3px 0 5px; font-size: 20px; }.status-hero p { margin: 0; color: #969ba8; font-size: 12px; }
+  .live-values { display: flex; gap: 24px; }.live-values span { display: grid; gap: 4px; color: #7f8491; font-size: 10px; }.live-values b { color: #eef0f5; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .overview-grid { display: grid; gap: 9px; margin-top: 14px; }
+  .summary-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; padding: 14px 16px; border: 1px solid #2d303a; border-radius: 12px; background: #20222b; text-align: left; cursor: pointer; }.summary-card:hover { border-color: #414653; background: #232630; }.summary-card > span:nth-child(2) { display:grid;gap:3px;}.summary-card small { color:#858b98; }.summary-card > b { color:#777e8d;font-size:20px; }
+  .card-icon { display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:#26354a;color:#8eb8ff;}.card-icon.violet{background:#322d47;color:#b9a6f5}.card-icon.amber{background:#3a3025;color:#efb96b}
+  .card { margin-top: 14px; padding: 20px; border: 1px solid #30333e; border-radius: 14px; background: #20222b; }
+  .card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 19px; }.card-heading p { margin: 5px 0 0; color: #858b98; font-size: 12px; }.count { display:grid;place-items:center;min-width:25px;height:25px;border-radius:8px;background:#2d303b;color:#aab0bd;font-size:11px; }
+  .control-grid { display:grid;grid-template-columns:1fr 1fr;gap:22px 28px; }.control-grid label { display:grid;gap:10px; }.control-grid label span { display:flex;justify-content:space-between;color:#b8bcc6;font-size:12px; }.control-grid b { color:#f3f4f7;font-variant-numeric:tabular-nums; }
+  input[type="range"] { width:100%;height:4px;accent-color:#76a6f5;cursor:pointer; }.warm{accent-color:#e99b53!important;}
+  .field-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:12px; }.field-grid > label { display:grid;gap:7px;color:#aeb3bf;font-size:11px; }.number-field { display:flex;align-items:center;border:1px solid #3a3e49;border-radius:9px;background:#1a1b22;overflow:hidden; }.number-field input { width:72px;padding:9px;border:0;background:transparent;color:white;outline:none; }.number-field em { color:#737987;font-size:10px;font-style:normal; }
+  .toggle-row { display:flex;align-items:center;justify-content:space-between;gap:20px;padding-top:17px;border-top:1px solid #2e313b; }.toggle-row > span { display:grid;gap:4px; }.toggle-row strong {font-size:12px}.toggle-row small{color:#858b98}.toggle-row input{width:38px;height:20px;accent-color:#6f9ce8}.toggle-row.disabled{opacity:.45}.rows{display:grid;gap:18px}.rows .toggle-row:first-child{padding-top:0;border-top:0}
+  .choice-grid {display:grid;grid-template-columns:1fr 1fr;gap:10px}.choice-grid label{position:relative;display:flex;align-items:center;gap:11px;padding:14px;border:1px solid #363a46;border-radius:11px;cursor:pointer}.choice-grid label.chosen{border-color:#618bd0;background:#252e3e}.choice-grid input{position:absolute;opacity:0}.choice-grid label span{display:grid;gap:4px}.choice-grid small{color:#858b98}.choice-grid i{display:none;margin-left:auto;color:#8cb4ff}.choice-grid .chosen i{display:block}
+  .monitor-list{display:grid}.monitor-list article{display:flex;gap:14px;padding:16px 0;border-top:1px solid #2e313b}.monitor-list article:first-child{padding-top:0;border-top:0}.monitor-icon{display:grid;place-items:center;width:38px;height:34px;border-radius:8px;background:#2a2d37;color:#9da4b2}.monitor-body{flex:1}.monitor-body>div{display:flex;justify-content:space-between;gap:12px}.monitor-body span{color:#bd8b75;font-size:10px}.monitor-body span.ok{color:#72c497}.monitor-body label{display:flex;align-items:center;gap:12px;margin-top:13px}.monitor-body output{width:38px;color:#b4b8c2;font-size:11px;text-align:right}.monitor-body p{margin:8px 0 0;color:#7f8592;font-size:11px}
+  .empty{display:grid;justify-items:center;padding:30px 20px;color:#818795;text-align:center}.empty>span{font-size:27px}.empty strong{margin-top:8px;color:#c4c8d0}.empty p{max-width:430px;margin:6px 0 0;font-size:11px}.empty.compact{padding:24px}.add-app{display:flex;gap:8px}.add-app input{flex:1;padding:10px 12px;border:1px solid #393d48;border-radius:9px;background:#191a21;color:white;outline:none}.add-app input:focus{border-color:#6c93d2}.add-app button,.secondary{padding:9px 13px;border:1px solid #424653;border-radius:9px;background:#2b2e38;cursor:pointer;font-size:11px}.inline-error{color:#ffaaa3;font-size:11px}.app-list{margin-top:13px}.app-list>div:not(.empty){display:flex;align-items:center;gap:11px;padding:12px 2px;border-top:1px solid #2e313b}.app-list strong{font-size:12px}.app-list button{margin-left:auto;border:0;background:transparent;color:#d78d89;cursor:pointer;font-size:11px}.app-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:#2b2e38;color:#959ba8}
+  .location-summary{display:flex;align-items:center;gap:12px}.location-summary>span{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#2b3040;color:#8aaff0;font-size:18px}.location-summary>div{display:grid;gap:4px}.location-summary small{color:#858b98}.map-panel{margin-top:17px}.notice{display:grid;gap:5px;padding:16px;border-radius:12px}.notice.danger{background:#3b2327;color:#ffb5af}.loading{color:#8c929f}.error{color:#ffaaa3}
+  @media(max-width:820px){.app-shell{grid-template-columns:72px minmax(0,1fr)}aside{padding-inline:9px}.logo strong,nav button:not(.active){font-size:0}.logo{justify-content:center;padding-inline:0}.logo span{font-size:25px}nav button{justify-content:center;padding:11px}nav button span{font-size:17px}.save-state{font-size:0;justify-content:center}.control-grid,.choice-grid{grid-template-columns:1fr}.field-grid{grid-template-columns:1fr}.status-hero{grid-template-columns:auto 1fr}.live-values{grid-column:1/-1;padding-left:69px}}
+  @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>

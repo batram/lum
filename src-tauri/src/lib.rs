@@ -10,17 +10,68 @@ mod sun;
 mod theme;
 
 use engine::FadeEngine;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, State,
+    AppHandle, Manager, PhysicalPosition, Position, State,
 };
+
+#[link(name = "user32")]
+extern "system" {
+    fn GetDoubleClickTime() -> u32;
+}
 
 /// Tauri command: get current engine state for the frontend.
 #[tauri::command]
 fn get_app_state(engine: State<'_, Arc<FadeEngine>>) -> engine::EngineState {
     engine.get_state()
+}
+
+#[tauri::command]
+fn set_automatic(engine: State<'_, Arc<FadeEngine>>, automatic: bool) {
+    engine.set_automatic(automatic);
+}
+
+#[tauri::command]
+fn set_temporary_adjustments(
+    engine: State<'_, Arc<FadeEngine>>,
+    brightness_offset_pct: i16,
+    temperature_offset_k: i32,
+) {
+    engine.set_adjustments(brightness_offset_pct, temperature_offset_k);
+}
+
+#[tauri::command]
+fn reset_temporary_adjustments(engine: State<'_, Arc<FadeEngine>>) {
+    engine.reset_adjustments();
+}
+
+#[tauri::command]
+fn set_effects_off(engine: State<'_, Arc<FadeEngine>>, effects_off: bool) {
+    engine.set_effects_off(effects_off);
+}
+
+#[tauri::command]
+fn hide_quick_panel(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
+#[tauri::command]
+fn open_settings_window(app: AppHandle) {
+    if let Some(panel) = app.get_webview_window("main") {
+        let _ = panel.hide();
+    }
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.show();
+        let _ = window.center();
+        let _ = window.set_focus();
+    }
 }
 
 /// Tauri command: toggle pause.
@@ -149,6 +200,12 @@ pub fn run() {
         .manage(settings)
         .invoke_handler(tauri::generate_handler![
             get_app_state,
+            set_automatic,
+            set_temporary_adjustments,
+            reset_temporary_adjustments,
+            set_effects_off,
+            hide_quick_panel,
+            open_settings_window,
             toggle_pause,
             jump_to_night,
             get_sun_times,
@@ -181,13 +238,12 @@ pub fn run() {
             ddcci::enumerate_monitors();
 
             // --- Tray menu ---
-            let show_i = MenuItem::with_id(app, "show", "Show Lum", true, None::<&str>)?;
-            let pause_i = MenuItem::with_id(app, "pause", "Pause", true, None::<&str>)?;
-            let day_night_i =
-                MenuItem::with_id(app, "day_night", "Jump to Night", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Quick controls", true, None::<&str>)?;
+            let automatic_i =
+                MenuItem::with_id(app, "automatic", "Toggle automatic", true, None::<&str>)?;
+            let effects_i =
+                MenuItem::with_id(app, "effects", "Turn effects off", true, None::<&str>)?;
             let theme_i = MenuItem::with_id(app, "theme", "Toggle Theme", true, None::<&str>)?;
-            let boost_i =
-                MenuItem::with_id(app, "boost", "Boost (full bright)", true, None::<&str>)?;
             let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
@@ -195,10 +251,9 @@ pub fn run() {
                 app,
                 &[
                     &show_i,
-                    &pause_i,
-                    &day_night_i,
+                    &automatic_i,
+                    &effects_i,
                     &theme_i,
-                    &boost_i,
                     &settings_i,
                     &quit_i,
                 ],
@@ -206,6 +261,8 @@ pub fn run() {
 
             // --- Tray icon ---
             let engine_for_tray = fade_engine.clone();
+            let tray_click_generation = Arc::new(AtomicU64::new(0));
+            let click_generation_for_tray = tray_click_generation.clone();
             let tray_icon = app.default_window_icon().cloned().unwrap();
             let _tray = TrayIconBuilder::with_id("lum-tray")
                 .icon(tray_icon)
@@ -225,58 +282,113 @@ pub fn run() {
                         ddcci::cleanup();
                         app.exit(0);
                     }
-                    "pause" => {
-                        engine_for_tray.toggle_pause();
-                    }
-                    "day_night" => {
+                    "automatic" => {
                         let state = engine_for_tray.get_state();
-                        let go_night = state.phase == "day" || state.phase == "morning";
-                        engine_for_tray.jump_to(go_night);
+                        engine_for_tray.set_automatic(!state.automatic);
+                    }
+                    "effects" => {
+                        let state = engine_for_tray.get_state();
+                        engine_for_tray.set_effects_off(!state.effects_off);
                     }
                     "theme" => {
                         theme::toggle_theme();
                     }
-                    "boost" => {
-                        // Boost = jump to full day brightness temporarily
-                        engine_for_tray.jump_to(false);
-                        println!("TODO: auto-resume after 2 min");
-                    }
                     "settings" => {
-                        if let Some(win) = app.get_webview_window("main") {
+                        if let Some(panel) = app.get_webview_window("main") {
+                            let _ = panel.hide();
+                        }
+                        if let Some(win) = app.get_webview_window("settings") {
                             let _ = win.show();
+                            let _ = win.center();
                             let _ = win.set_focus();
                         }
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    // Left-click tray icon → show/hide window
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(win) = app.get_webview_window("main") {
-                            if win.is_visible().unwrap_or(false) {
-                                let _ = win.hide();
-                            } else {
-                                let _ = win.show();
-                                let _ = win.set_focus();
+                .on_tray_icon_event(move |tray, event| {
+                    let app = tray.app_handle();
+                    match event {
+                        // Double-click opens the full settings window.
+                        TrayIconEvent::DoubleClick {
+                            button: MouseButton::Left,
+                            ..
+                        } => {
+                            // Cancel the delayed single-click action before opening settings.
+                            click_generation_for_tray.fetch_add(1, Ordering::Relaxed);
+                            if let Some(panel) = app.get_webview_window("main") {
+                                let _ = panel.hide();
+                            }
+                            if let Some(settings) = app.get_webview_window("settings") {
+                                let _ = settings.show();
+                                let _ = settings.center();
+                                let _ = settings.set_focus();
                             }
                         }
+                        // Single left-click toggles the compact quick panel.
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            position,
+                            ..
+                        } => {
+                            // Windows reports the first click before it reports a double-click.
+                            // Delay this action for the configured double-click interval so the
+                            // double-click handler can cancel it without flashing the popup.
+                            let generation = click_generation_for_tray
+                                .fetch_add(1, Ordering::Relaxed)
+                                + 1;
+                            let generation_guard = click_generation_for_tray.clone();
+                            let app = app.clone();
+                            let delay_ms = unsafe { GetDoubleClickTime() }.max(200);
+                            thread::spawn(move || {
+                                thread::sleep(Duration::from_millis(delay_ms as u64));
+                                if generation_guard.load(Ordering::Relaxed) != generation {
+                                    return;
+                                }
+                                let app_for_main = app.clone();
+                                let _ = app.run_on_main_thread(move || {
+                                    if generation_guard.load(Ordering::Relaxed) != generation {
+                                        return;
+                                    }
+                                    if let Some(win) = app_for_main.get_webview_window("main") {
+                                        if win.is_visible().unwrap_or(false) {
+                                            let _ = win.hide();
+                                        } else {
+                                            if let Ok(size) = win.outer_size() {
+                                                let x = (position.x - size.width as f64 + 28.0)
+                                                    .round()
+                                                    as i32;
+                                                let y = (position.y - size.height as f64 - 12.0)
+                                                    .round()
+                                                    as i32;
+                                                let _ = win.set_position(Position::Physical(
+                                                    PhysicalPosition::new(x, y),
+                                                ));
+                                            }
+                                            let _ = win.show();
+                                            let _ = win.set_focus();
+                                        }
+                                    }
+                                });
+                            });
+                        }
+                        _ => {}
                     }
                 })
                 .build(app)?;
 
             Ok(())
         })
-        // Window close = hide to tray (not quit)
+        // Both surfaces close to tray. The quick panel also dismisses on focus loss.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+            }
+            if window.label() == "main" {
+                if let tauri::WindowEvent::Focused(false) = event {
+                    let _ = window.hide();
+                }
             }
         })
         .run(tauri::generate_context!())
