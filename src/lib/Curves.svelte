@@ -128,7 +128,14 @@
     return minute >= darkMinute && minute < lightMinute;
   }
   function formatMinute(minute) { return `${String(Math.floor(wrapMinute(minute) / 60)).padStart(2, "0")}:${String(wrapMinute(minute) % 60).padStart(2, "0")}`; }
-  function offsetLabel(value) { return value === 0 ? "at solar time" : `${value > 0 ? "+" : ""}${value} min`; }
+  function themeOffsetLabel(value, kind) {
+    const anchor = settings.fade.use_civil_twilight
+      ? (kind === "light" ? "civil dawn" : "civil dusk")
+      : (kind === "light" ? "sunrise" : "sunset");
+    const minutes = Math.abs(Number(value));
+    if (minutes === 0) return `at ${anchor}`;
+    return `${minutes} min ${value < 0 ? "before" : "after"} ${anchor}`;
+  }
 
   function localPoint(event) {
     const point = svgEl.createSVGPoint();
@@ -268,8 +275,8 @@
       <g class="solar-marker sunset"><line x1={xForMinute(sunsetMinute)} y1={PLOT.top - 6} x2={xForMinute(sunsetMinute)} y2={PLOT.top + PLOT.height} /><circle cx={xForMinute(sunsetMinute)} cy={PLOT.top - 9} r="4" /><text x={xForMinute(sunsetMinute)} y={PLOT.top - 48}>Sunset {formatMinute(sunsetMinute)}</text></g>
 
       {#if settings.theme.auto_switch}
-        <g class="theme-marker light" role="slider" aria-label="Go light theme time" aria-valuemin="-720" aria-valuemax="720" aria-valuenow={settings.theme.light_offset_min} tabindex="0" onkeydown={(event) => handleThemeKey("theme-light", event)} onpointerdown={(event) => startDrag("theme-light", event)}><line class="marker-hit" x1={xForMinute(lightMinute)} y1={PLOT.top - 24} x2={xForMinute(lightMinute)} y2={PLOT.top + PLOT.height} /><line x1={xForMinute(lightMinute)} y1={PLOT.top - 6} x2={xForMinute(lightMinute)} y2={PLOT.top + PLOT.height} /><path d={`M${xForMinute(lightMinute)-7},${PLOT.top-8} L${xForMinute(lightMinute)+7},${PLOT.top-8} L${xForMinute(lightMinute)},${PLOT.top} Z`} /><text x={xForMinute(lightMinute)} y={PLOT.top - 29}>Go light {formatMinute(lightMinute)}</text><title>Go light {offsetLabel(settings.theme.light_offset_min)}</title></g>
-        <g class="theme-marker dark" role="slider" aria-label="Go dark theme time" aria-valuemin="-720" aria-valuemax="720" aria-valuenow={settings.theme.dark_offset_min} tabindex="0" onkeydown={(event) => handleThemeKey("theme-dark", event)} onpointerdown={(event) => startDrag("theme-dark", event)}><line class="marker-hit" x1={xForMinute(darkMinute)} y1={PLOT.top - 24} x2={xForMinute(darkMinute)} y2={PLOT.top + PLOT.height} /><line x1={xForMinute(darkMinute)} y1={PLOT.top - 6} x2={xForMinute(darkMinute)} y2={PLOT.top + PLOT.height} /><path d={`M${xForMinute(darkMinute)-7},${PLOT.top-8} L${xForMinute(darkMinute)+7},${PLOT.top-8} L${xForMinute(darkMinute)},${PLOT.top} Z`} /><text x={xForMinute(darkMinute)} y={PLOT.top - 29}>Go dark {formatMinute(darkMinute)}</text><title>Go dark {offsetLabel(settings.theme.dark_offset_min)}</title></g>
+        <g class="theme-marker light" role="slider" aria-label="Go light theme time" aria-valuemin="-720" aria-valuemax="720" aria-valuenow={settings.theme.light_offset_min} tabindex="0" onkeydown={(event) => handleThemeKey("theme-light", event)} onpointerdown={(event) => startDrag("theme-light", event)}><line class="marker-hit" x1={xForMinute(lightMinute)} y1={PLOT.top - 24} x2={xForMinute(lightMinute)} y2={PLOT.top + PLOT.height} /><line x1={xForMinute(lightMinute)} y1={PLOT.top - 6} x2={xForMinute(lightMinute)} y2={PLOT.top + PLOT.height} /><path d={`M${xForMinute(lightMinute)-7},${PLOT.top-8} L${xForMinute(lightMinute)+7},${PLOT.top-8} L${xForMinute(lightMinute)},${PLOT.top} Z`} /><text x={xForMinute(lightMinute)} y={PLOT.top - 29}>{dragging?.kind === "theme-light" ? `Go light · ${themeOffsetLabel(settings.theme.light_offset_min, "light")}` : "Go light"}</text><title>Go light · {themeOffsetLabel(settings.theme.light_offset_min, "light")}</title></g>
+        <g class="theme-marker dark" role="slider" aria-label="Go dark theme time" aria-valuemin="-720" aria-valuemax="720" aria-valuenow={settings.theme.dark_offset_min} tabindex="0" onkeydown={(event) => handleThemeKey("theme-dark", event)} onpointerdown={(event) => startDrag("theme-dark", event)}><line class="marker-hit" x1={xForMinute(darkMinute)} y1={PLOT.top - 24} x2={xForMinute(darkMinute)} y2={PLOT.top + PLOT.height} /><line x1={xForMinute(darkMinute)} y1={PLOT.top - 6} x2={xForMinute(darkMinute)} y2={PLOT.top + PLOT.height} /><path d={`M${xForMinute(darkMinute)-7},${PLOT.top-8} L${xForMinute(darkMinute)+7},${PLOT.top-8} L${xForMinute(darkMinute)},${PLOT.top} Z`} /><text x={xForMinute(darkMinute)} y={PLOT.top - 29}>{dragging?.kind === "theme-dark" ? `Go dark · ${themeOffsetLabel(settings.theme.dark_offset_min, "dark")}` : "Go dark"}</text><title>Go dark · {themeOffsetLabel(settings.theme.dark_offset_min, "dark")}</title></g>
       {/if}
     {/if}
 
