@@ -16,6 +16,8 @@
   let state = $state({ ...emptyState });
   let hardwareBrightness = $state(100);
   let overlayBrightness = $state(100);
+  let combinedBrightness = $state(100);
+  let separateBrightness = $state(false);
   let temperature = $state(6500);
   let loaded = $state(false);
   let error = $state("");
@@ -26,6 +28,7 @@
   let requestVersion = 0;
 
   onMount(() => {
+    separateBrightness = localStorage.getItem("lum.separateBrightness") === "true";
     const onKey = (event) => event.key === "Escape" && invoke("hide_quick_panel");
     const finishInteraction = () => { interacting = false; };
     window.addEventListener("keydown", onKey);
@@ -69,6 +72,7 @@
       if (!loaded || (!interacting && !pendingAdjustment)) {
         hardwareBrightness = next.hardware_brightness_pct;
         overlayBrightness = next.overlay_brightness_pct;
+        combinedBrightness = Math.round((next.hardware_brightness_pct + next.overlay_brightness_pct) / 2);
         temperature = next.color_temp_k;
       }
       loaded = true;
@@ -120,6 +124,18 @@
     }, 120);
   }
 
+  function queueCombinedBrightness() {
+    hardwareBrightness = Number(combinedBrightness);
+    overlayBrightness = Number(combinedBrightness);
+    queueAdjustment();
+  }
+
+  function toggleSeparateBrightness() {
+    separateBrightness = !separateBrightness;
+    localStorage.setItem("lum.separateBrightness", String(separateBrightness));
+    if (!separateBrightness) combinedBrightness = Math.round((Number(hardwareBrightness) + Number(overlayBrightness)) / 2);
+  }
+
   function toggleAutomatic() {
     const previous = state.automatic;
     const automatic = !previous;
@@ -145,6 +161,7 @@
     pendingAutomatic = { value: true, expires: Date.now() + 4000 };
     hardwareBrightness = state.scheduled_hardware_brightness_pct;
     overlayBrightness = state.scheduled_overlay_brightness_pct;
+    combinedBrightness = Math.round((state.scheduled_hardware_brightness_pct + state.scheduled_overlay_brightness_pct) / 2);
     temperature = state.scheduled_color_temp_k;
     state = { ...state, automatic: true, hardware_offset_pct: 0, overlay_offset_pct: 0, temperature_offset_k: 0 };
     Promise.all([
@@ -195,14 +212,22 @@
   </section>
 
   <section class="controls" aria-label="Temporary display adjustments">
-    <label>
-      <span class="label-row"><span>Hardware</span><output>{hardwareBrightness}%</output></span>
-      <input aria-label="Temporary hardware brightness" type="range" min="0" max="100" step="1" bind:value={hardwareBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
-    </label>
-    <label>
-      <span class="label-row"><span>Overlay</span><output>{overlayBrightness}%</output></span>
-      <input class="overlay" aria-label="Temporary overlay brightness" type="range" min="5" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
-    </label>
+    <div class="control-heading"><strong>Brightness</strong><button type="button" class:active={separateBrightness} aria-pressed={separateBrightness} onclick={toggleSeparateBrightness}>{separateBrightness ? "Use together" : "Separate monitor and gamma"}</button></div>
+    {#if separateBrightness}
+      <label>
+        <span class="label-row"><span>Monitor</span><output>{hardwareBrightness}%</output></span>
+        <input aria-label="Temporary monitor brightness" type="range" min="0" max="100" step="1" bind:value={hardwareBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+      </label>
+      <label>
+        <span class="label-row"><span>Gamma</span><output>{overlayBrightness}%</output></span>
+        <input class="overlay" aria-label="Temporary gamma brightness" type="range" min="5" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+      </label>
+    {:else}
+      <label>
+        <span class="label-row"><span>Monitor + gamma</span><output>{combinedBrightness}%</output></span>
+        <input aria-label="Temporary combined monitor and gamma brightness" type="range" min="5" max="100" step="1" bind:value={combinedBrightness} onpointerdown={() => { interacting = true; }} oninput={queueCombinedBrightness} disabled={!loaded || state.effects_off} />
+      </label>
+    {/if}
     <label>
       <span class="label-row"><span>Warmth</span><output>{temperature}K</output></span>
       <input class="warmth" aria-label="Temporary color temperature" type="range" min="1800" max="10000" step="100" bind:value={temperature} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
@@ -235,27 +260,28 @@
 <style>
   :global(*) { box-sizing: border-box; }
   :global(html) { color-scheme: dark; background: transparent; }
-  :global(body) { margin: 0; overflow: hidden; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; background: transparent; color: #f5f6fa; }
+  :global(body) { margin: 0; padding: 6px; overflow: hidden; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; background: transparent; color: #f5f6fa; }
   :global(button), :global(input) { font: inherit; }
-  .panel { height: 100vh; padding: 7px 11px 6px; border: 1px solid rgba(255,255,255,.13); border-radius: 13px; background: linear-gradient(155deg, rgba(35,37,48,.985), rgba(24,25,33,.99)); box-shadow: 0 14px 40px rgba(0,0,0,.4); transition: opacity .15s ease; }
+  .panel { height: calc(100vh - 12px); padding: 12px 15px 10px; border: 1px solid rgba(255,255,255,.14); border-radius: 16px; background: linear-gradient(155deg, rgba(35,37,48,.96), rgba(24,25,33,.965)); box-shadow: 0 14px 40px rgba(0,0,0,.42); transition: opacity .15s ease; }
   .panel.loading { opacity: .72; }
   header { display: flex; align-items: center; justify-content: space-between; }
   .brand { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 650; letter-spacing: -.01em; }
   .mark { display: grid; place-items: center; width: 19px; height: 19px; color: #ffc85b; font-size: 18px; transform: rotate(-18deg); }
   button { border: 0; cursor: pointer; color: inherit; }
-  .icon-button { display: grid; place-items: center; width: 32px; height: 30px; margin: -1px -2px -1px 0; border-radius: 8px; background: rgba(255,255,255,.045); color: #c7ccda; font-size: 17px; line-height: 1; }
-  .icon-button:hover, .icon-button:focus-visible { background: rgba(255,255,255,.08); color: #fff; outline: none; }
-  .hero { display: flex; align-items: center; gap: 9px; padding: 5px 2px 6px; }
+  .icon-button { display: grid; place-items: center; width: 38px; height: 36px; margin: -3px -3px -1px 0; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(255,255,255,.06); color: #d8dce7; font-size: 22px; line-height: 1; }
+  .icon-button:hover, .icon-button:focus-visible { border-color: rgba(121,168,255,.35); background: rgba(121,168,255,.13); color: #fff; outline: none; }
+  .hero { display: flex; align-items: center; gap: 11px; padding: 9px 2px 10px; }
   .orb { width: 31px; height: 31px; flex: 0 0 auto; border-radius: 50%; background: linear-gradient(145deg,#fff0bd,#ffc455); box-shadow: 0 0 20px rgba(255,190,77,.18); overflow: hidden; }
   .orb span { display: block; width: 100%; height: 100%; border-radius: 50%; background: #272934; transform: translate(23px,-6px); transition: transform .35s ease; }
   .orb:not(.night) span { transform: translate(35px,-10px); }
   h1 { margin: 0 0 1px; font-size: 16px; line-height: 1.12; letter-spacing: -.02em; }
   .hero p { margin: 0; color: #aeb3c0; font-size: 10.5px; line-height: 1.2; }
-  .controls { display: grid; gap: 7px; padding: 7px 11px 6px; border: 1px solid rgba(255,255,255,.075); border-radius: 10px; background: rgba(255,255,255,.035); }
-  .controls label { display: grid; gap: 2px; }
+  .controls { display: grid; gap: 11px; padding: 11px 13px 10px; border: 1px solid rgba(255,255,255,.075); border-radius: 11px; background: rgba(255,255,255,.035); }
+  .controls label { display: grid; gap: 6px; }
+  .control-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.control-heading strong{font-size:11.5px;font-weight:650}.control-heading button{padding:3px 7px;border-radius:6px;background:transparent;color:#8fa7cf;font-size:9.5px}.control-heading button:hover,.control-heading button:focus-visible,.control-heading button.active{background:rgba(121,168,255,.1);color:#b9d1fb;outline:none}
   .label-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; color: #d7d9e0; }
   output { color: #fff; font-size: 11.5px; font-weight: 650; font-variant-numeric: tabular-nums; }
-  input[type="range"] { width: 100%; height: 4px; margin: 3px 0; accent-color: #79a8ff; cursor: pointer; }
+  input[type="range"] { width: 100%; height: 6px; margin: 4px 0 2px; accent-color: #79a8ff; cursor: pointer; }
   input[type="range"].warmth { accent-color: #f1a65c; }
   input[type="range"].overlay { accent-color: #57c9c1; }
   input:disabled { opacity: .42; cursor: default; }
