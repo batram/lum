@@ -16,18 +16,18 @@
         "title": "Lum",
         "url": "/",
         "width": 352,
-        "height": 330,
+        "height": 360,
         "minWidth": 352,
-        "minHeight": 330,
+        "minHeight": 360,
         "maxWidth": 352,
-        "maxHeight": 330,
+        "maxHeight": 360,
         "resizable": false,
         "visible": false,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "shadow": true
+        "shadow": false
       },
       {
         "label": "settings",
