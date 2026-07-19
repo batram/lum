@@ -10,10 +10,10 @@ mod sun;
 mod theme;
 
 use engine::FadeEngine;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -193,6 +193,10 @@ pub fn run() {
     // Initialize engine and settings
     let fade_engine = FadeEngine::new();
     let settings = config::Settings::load();
+    let tray_interaction = Arc::new(AtomicBool::new(false));
+    let tray_interaction_for_setup = tray_interaction.clone();
+    let last_focus_dismissal = Arc::new(Mutex::new(None::<Instant>));
+    let last_focus_dismissal_for_setup = last_focus_dismissal.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -263,6 +267,9 @@ pub fn run() {
             let engine_for_tray = fade_engine.clone();
             let tray_click_generation = Arc::new(AtomicU64::new(0));
             let click_generation_for_tray = tray_click_generation.clone();
+            let suppress_click_up_for_tray = Arc::new(AtomicBool::new(false));
+            let tray_interaction_for_tray = tray_interaction_for_setup.clone();
+            let last_focus_dismissal_for_tray = last_focus_dismissal_for_setup.clone();
             let tray_icon = app.default_window_icon().cloned().unwrap();
             let _tray = TrayIconBuilder::with_id("lum-tray")
                 .icon(tray_icon)
@@ -308,13 +315,25 @@ pub fn run() {
                 .on_tray_icon_event(move |tray, event| {
                     let app = tray.app_handle();
                     match event {
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Down,
+                            ..
+                        } => {
+                            eprintln!("[lum][tray] left down");
+                            // The tray temporarily takes focus from the panel. Keep it visible
+                            // until we know whether this interaction is a single or double click.
+                            tray_interaction_for_tray.store(true, Ordering::Relaxed);
+                        }
                         // Double-click opens the full settings window.
                         TrayIconEvent::DoubleClick {
                             button: MouseButton::Left,
                             ..
                         } => {
+                            eprintln!("[lum][tray] double click -> settings");
                             // Cancel the delayed single-click action before opening settings.
                             click_generation_for_tray.fetch_add(1, Ordering::Relaxed);
+                            suppress_click_up_for_tray.store(true, Ordering::Relaxed);
                             if let Some(panel) = app.get_webview_window("main") {
                                 let _ = panel.hide();
                             }
@@ -323,6 +342,7 @@ pub fn run() {
                                 let _ = settings.center();
                                 let _ = settings.set_focus();
                             }
+                            tray_interaction_for_tray.store(false, Ordering::Relaxed);
                         }
                         // Single left-click toggles the compact quick panel.
                         TrayIconEvent::Click {
@@ -331,29 +351,59 @@ pub fn run() {
                             position,
                             ..
                         } => {
+                            // Some Windows/Tauri combinations only surface the Up event, so this
+                            // cannot rely on observing MouseButtonState::Down first.
+                            tray_interaction_for_tray.store(true, Ordering::Relaxed);
+                            // Windows emits a trailing Click(Up) for a double click. Consuming it
+                            // prevents the quick panel from opening over the settings window.
+                            if suppress_click_up_for_tray.swap(false, Ordering::Relaxed) {
+                                eprintln!("[lum][tray] consumed double-click trailing up");
+                                tray_interaction_for_tray.store(false, Ordering::Relaxed);
+                                return;
+                            }
+                            let delay_ms = unsafe { GetDoubleClickTime() }.max(200);
+                            let recently_dismissed_by_focus = last_focus_dismissal_for_tray
+                                .lock()
+                                .ok()
+                                .and_then(|mut dismissed_at| dismissed_at.take())
+                                .is_some_and(|dismissed_at| {
+                                    dismissed_at.elapsed()
+                                        <= Duration::from_millis(delay_ms as u64 + 250)
+                                });
+                            if recently_dismissed_by_focus {
+                                eprintln!(
+                                    "[lum][tray] left up consumed as close after focus dismissal"
+                                );
+                                tray_interaction_for_tray.store(false, Ordering::Relaxed);
+                                return;
+                            }
+                            eprintln!("[lum][tray] left up -> schedule toggle in {delay_ms}ms");
                             // Windows reports the first click before it reports a double-click.
                             // Delay this action for the configured double-click interval so the
                             // double-click handler can cancel it without flashing the popup.
-                            let generation = click_generation_for_tray
-                                .fetch_add(1, Ordering::Relaxed)
-                                + 1;
+                            let generation =
+                                click_generation_for_tray.fetch_add(1, Ordering::Relaxed) + 1;
                             let generation_guard = click_generation_for_tray.clone();
                             let app = app.clone();
-                            let delay_ms = unsafe { GetDoubleClickTime() }.max(200);
+                            let tray_interaction = tray_interaction_for_tray.clone();
                             thread::spawn(move || {
                                 thread::sleep(Duration::from_millis(delay_ms as u64));
                                 if generation_guard.load(Ordering::Relaxed) != generation {
+                                    tray_interaction.store(false, Ordering::Relaxed);
                                     return;
                                 }
                                 let app_for_main = app.clone();
                                 let _ = app.run_on_main_thread(move || {
                                     if generation_guard.load(Ordering::Relaxed) != generation {
+                                        tray_interaction.store(false, Ordering::Relaxed);
                                         return;
                                     }
                                     if let Some(win) = app_for_main.get_webview_window("main") {
                                         if win.is_visible().unwrap_or(false) {
+                                            eprintln!("[lum][tray] delayed toggle -> hide panel");
                                             let _ = win.hide();
                                         } else {
+                                            eprintln!("[lum][tray] delayed toggle -> show panel");
                                             if let Ok(size) = win.outer_size() {
                                                 let x = (position.x - size.width as f64 + 28.0)
                                                     .round()
@@ -369,6 +419,7 @@ pub fn run() {
                                             let _ = win.set_focus();
                                         }
                                     }
+                                    tray_interaction.store(false, Ordering::Relaxed);
                                 });
                             });
                         }
@@ -380,14 +431,43 @@ pub fn run() {
             Ok(())
         })
         // Both surfaces close to tray. The quick panel also dismisses on focus loss.
-        .on_window_event(|window, event| {
+        .on_window_event(move |window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
             }
             if window.label() == "main" {
                 if let tauri::WindowEvent::Focused(false) = event {
-                    let _ = window.hide();
+                    eprintln!("[lum][panel] focus lost");
+                    // Windows can report focus loss before it delivers the tray mouse-down.
+                    // Defer dismissal briefly so the tray handler can mark the interaction;
+                    // otherwise the delayed single-click toggle sees a hidden panel and reopens it.
+                    let app = window.app_handle().clone();
+                    let tray_interaction = tray_interaction.clone();
+                    let last_focus_dismissal = last_focus_dismissal.clone();
+                    thread::spawn(move || {
+                        thread::sleep(Duration::from_millis(50));
+                        let app_for_main = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            if tray_interaction.load(Ordering::Relaxed) {
+                                eprintln!(
+                                    "[lum][panel] focus dismissal skipped for tray interaction"
+                                );
+                                return;
+                            }
+                            if let Some(panel) = app_for_main.get_webview_window("main") {
+                                if !panel.is_focused().unwrap_or(false) {
+                                    if panel.is_visible().unwrap_or(false) {
+                                        if let Ok(mut dismissed_at) = last_focus_dismissal.lock() {
+                                            *dismissed_at = Some(Instant::now());
+                                        }
+                                    }
+                                    eprintln!("[lum][panel] focus dismissal -> hide panel");
+                                    let _ = panel.hide();
+                                }
+                            }
+                        });
+                    });
                 }
             }
         })
