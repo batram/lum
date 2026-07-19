@@ -111,6 +111,7 @@ impl FadeEngine {
             // Cache sun times, recalculate once per hour
             let mut cached_sun: Option<sun::SunTimes> = None;
             let mut last_sun_calc: Option<chrono::NaiveDate> = None;
+            let mut last_location: Option<(f64, f64)> = None;
             let mut tick_count: u64 = 0;
             let mut last_phase: String = String::new();
 
@@ -140,23 +141,33 @@ impl FadeEngine {
                 let today = now.date();
 
                 // Recalculate sun times at start of each new day or every 3600 ticks
-                let needs_recalc = last_sun_calc != Some(today) || tick_count % 3600 == 1;
+                let location = (settings.location.latitude, settings.location.longitude);
+                let location_changed = last_location
+                    .map(|old| (old.0 - location.0).abs() > f64::EPSILON || (old.1 - location.1).abs() > f64::EPSILON)
+                    .unwrap_or(true);
+                let needs_recalc = last_sun_calc != Some(today) || location_changed || tick_count % 3600 == 1;
                 if needs_recalc {
                     cached_sun = Some(sun::calculate_today(
                         settings.location.latitude,
                         settings.location.longitude,
                     ));
                     last_sun_calc = Some(today);
+                    last_location = Some(location);
                 }
 
-                let sun_times = match &cached_sun {
+                let calculated_sun = match &cached_sun {
                     Some(s) => s,
                     None => continue,
                 };
+                let mut effective_sun = calculated_sun.clone();
+                if settings.fade.use_civil_twilight {
+                    effective_sun.sunrise = calculated_sun.civil_dawn;
+                    effective_sun.sunset = calculated_sun.civil_dusk;
+                }
 
                 // Calculate current intensity
                 let (raw_intensity, phase) = sun::current_intensity(
-                    sun_times,
+                    &effective_sun,
                     now,
                     settings.fade.fade_duration_min,
                     settings.fade.evening_offset_min,
@@ -197,8 +208,8 @@ impl FadeEngine {
                 state.color_temp_k = color_temp;
                 state.brightness_pct = brightness;
                 state.paused = false;
-                state.sunrise = format!("{:02}:{:02}", sun_times.sunrise.time().hour(), sun_times.sunrise.time().minute());
-                state.sunset = format!("{:02}:{:02}", sun_times.sunset.time().hour(), sun_times.sunset.time().minute());
+                state.sunrise = format!("{:02}:{:02}", calculated_sun.sunrise.time().hour(), calculated_sun.sunrise.time().minute());
+                state.sunset = format!("{:02}:{:02}", calculated_sun.sunset.time().hour(), calculated_sun.sunset.time().minute());
             }
 
             // Cleanup on stop: reset gamma

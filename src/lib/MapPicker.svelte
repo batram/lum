@@ -2,22 +2,24 @@
   import { onMount } from "svelte";
   import L from "leaflet";
   import "leaflet/dist/leaflet.css";
-  import { worldGeoJSON } from "$lib/world-geo.js";
+  import worldGeoJSON from "$lib/world-geo.json";
 
   let { lat = 40.7128, lng = -74.006, onPick = () => {} } = $props();
 
   let mapEl = $state(null);
   let map = null;
   let marker = null;
-  let latInput = $state(lat.toString());
-  let lngInput = $state(lng.toString());
+  let latInput = $state("");
+  let lngInput = $state("");
 
   onMount(() => {
+    latInput = lat.toString();
+    lngInput = lng.toString();
     map = L.map(mapEl, {
       center: [lat, lng],
       zoom: 2,
       minZoom: 1,
-      maxZoom: 10,
+      maxZoom: 8,
       zoomControl: true,
       attributionControl: false,
       worldCopyJump: true,
@@ -28,13 +30,13 @@
     // Dark-friendly background
     map.getContainer().style.background = "#1a2332";
 
-    // Render bundled world outlines (fully offline)
+    // Natural Earth boundaries are bundled with the app: detailed, but fully offline.
     L.geoJSON(worldGeoJSON, {
       style: {
-        fillColor: "#3a5a3a",
-        fillOpacity: 0.7,
-        color: "#5a8a5a",
-        weight: 1,
+        fillColor: "#344f46",
+        fillOpacity: 0.9,
+        color: "#719184",
+        weight: 0.65,
       },
     }).addTo(map);
 
@@ -102,7 +104,7 @@
   }
 
   .map {
-    height: 240px;
+    height: 300px;
     width: 100%;
     z-index: 0;
     background: #1a2332;

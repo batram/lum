@@ -29,10 +29,11 @@ pub fn calculate_sun_times(
     longitude: f64,
     utc_offset_hours: f64,
 ) -> SunTimes {
-    let sunrise = calc_sun_event(date, latitude, longitude, utc_offset_hours, true, 0.833);
-    let sunset = calc_sun_event(date, latitude, longitude, utc_offset_hours, false, 0.833);
-    let civil_dawn = calc_sun_event(date, latitude, longitude, utc_offset_hours, true, 6.0);
-    let civil_dusk = calc_sun_event(date, latitude, longitude, utc_offset_hours, false, 6.0);
+    // The algorithm expects the zenith measured from vertical, not solar elevation.
+    let sunrise = calc_sun_event(date, latitude, longitude, utc_offset_hours, true, 90.833);
+    let sunset = calc_sun_event(date, latitude, longitude, utc_offset_hours, false, 90.833);
+    let civil_dawn = calc_sun_event(date, latitude, longitude, utc_offset_hours, true, 96.0);
+    let civil_dusk = calc_sun_event(date, latitude, longitude, utc_offset_hours, false, 96.0);
 
     SunTimes {
         sunrise,

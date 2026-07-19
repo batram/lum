@@ -2,509 +2,243 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
 
-  let { settings, onThemeChange = () => {} } = $props();
+  let { settings } = $props();
 
-  const W = 800;
-  const H = 280;
-  const PAD_L = 50;
-  const PAD_R = 20;
-  const PAD_T = 20;
-  const PAD_B = 50;
-  const PLOT_W = W - PAD_L - PAD_R;
-  const PLOT_H = H - PAD_T - PAD_B;
+  const W = 900;
+  const H = 330;
+  const PAD = { left: 54, right: 22, top: 46, bottom: 42 };
+  const PLOT_W = W - PAD.left - PAD.right;
+  const PLOT_H = H - PAD.top - PAD.bottom;
+  const hours = Array.from({ length: 25 }, (_, i) => i);
 
-  let sunTimes = $state(null);
-  let dragging = $state(null); // { type: 'brightness'|'color', x: number }
   let svgEl = $state(null);
-  let currentTime = $state(new Date());
+  let dragging = $state(null);
+  let sunTimes = $state(null);
+  let solarError = $state(false);
+  let now = $state(new Date());
+  let requestId = 0;
 
-  // Update current time every second
-  onMount(async () => {
-    try {
-      sunTimes = await invoke("get_sun_times");
-    } catch {
-      sunTimes = { sunrise: "06:30", sunset: "20:00" };
-    }
-
-    const timer = setInterval(() => {
-      currentTime = new Date();
-    }, 1000);
-
+  onMount(() => {
+    const timer = setInterval(() => (now = new Date()), 1000);
     return () => clearInterval(timer);
   });
 
-  // Convert "HH:MM" to minutes from midnight
-  function toMin(t) {
-    if (!t) return 720;
-    const [h, m] = t.split(":").map(Number);
-    return h * 60 + (m || 0);
+  $effect(() => {
+    const latitude = Number(settings.location.latitude);
+    const longitude = Number(settings.location.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    loadSunTimes(latitude, longitude);
+  });
+
+  async function loadSunTimes(latitude, longitude) {
+    const id = ++requestId;
+    try {
+      const result = await invoke("get_sun_times", { latitude, longitude });
+      if (id === requestId) {
+        sunTimes = result;
+        solarError = false;
+      }
+    } catch {
+      if (id === requestId) solarError = true;
+    }
   }
 
-  // Minutes → x pixel
-  function minX(min) {
-    return PAD_L + (min / 1440) * PLOT_W;
+  function toMinute(value) {
+    if (!/^\d{2}:\d{2}$/.test(value ?? "")) return 720;
+    const [hour, minute] = value.split(":").map(Number);
+    return hour * 60 + minute;
   }
 
-  // Value 0-100 → y pixel (inverted)
-  function valY(v) {
-    return PAD_T + PLOT_H - (v / 100) * PLOT_H;
+  function xForMinute(minute) {
+    return PAD.left + (minute / 1440) * PLOT_W;
   }
 
-  // Pixel → value
-  function yToVal(y) {
-    return Math.max(0, Math.min(100, ((PAD_T + PLOT_H - y) / PLOT_H) * 100));
+  function yForPercent(percent) {
+    return PAD.top + PLOT_H - (percent / 100) * PLOT_H;
   }
 
-  // Smoothstep interpolation
-  function smoothstep(edge0, edge1, x) {
-    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  function smoothstep(start, end, value) {
+    if (end <= start) return value >= end ? 1 : 0;
+    const t = Math.max(0, Math.min(1, (value - start) / (end - start)));
     return t * t * (3 - 2 * t);
   }
 
-  // Compute intensity at a given minute (0=full day, 1=full night)
-  function intensityAt(min) {
-    if (!sunTimes || !settings) return 0;
-    const sunrise = toMin(sunTimes.sunrise);
-    const sunset = toMin(sunTimes.sunset);
-    const fadeDur = settings.fade.fade_duration_min;
-    const eveOff = settings.fade.evening_offset_min;
-    const mornOff = settings.fade.morning_offset_min;
+  function nightAmount(minute) {
+    if (!sunTimes) return 0;
+    const sunrise = toMinute(settings.fade.use_civil_twilight ? sunTimes.civil_dawn : sunTimes.sunrise);
+    const sunset = toMinute(settings.fade.use_civil_twilight ? sunTimes.civil_dusk : sunTimes.sunset);
+    const duration = Math.max(5, Number(settings.fade.fade_duration_min));
+    const morningEnd = sunrise + Number(settings.fade.morning_offset_min);
+    const morningStart = morningEnd - duration;
+    const eveningEnd = sunset - Number(settings.fade.evening_offset_min);
+    const eveningStart = eveningEnd - duration;
 
-    // Evening fade: starts at sunset - eveOff - fadeDur, ends at sunset - eveOff
-    const eveStart = sunset - eveOff - fadeDur;
-    const eveEnd = sunset - eveOff;
-    // Morning fade: starts at sunrise + mornOff - fadeDur, ends at sunrise + mornOff
-    const mornStart = sunrise + mornOff - fadeDur;
-    const mornEnd = sunrise + mornOff;
-
-    if (min >= eveEnd || min < mornStart) return 1; // night
-    if (min >= mornEnd && min < eveStart) return 0; // day
-    if (min >= eveStart && min < eveEnd) return smoothstep(eveStart, eveEnd, min); // evening fade
-    if (min >= mornStart && min < mornEnd) return 1 - smoothstep(mornStart, mornEnd, min); // morning fade
-    return 0;
+    if (minute < morningStart || minute >= eveningEnd) return 1;
+    if (minute < morningEnd) return 1 - smoothstep(morningStart, morningEnd, minute);
+    if (minute < eveningStart) return 0;
+    return smoothstep(eveningStart, eveningEnd, minute);
   }
 
-  // Generate SVG path for a curve
-  function curvePath(getVal) {
-    const step = 5; // every 5 minutes for smoother curves
-    let d = "";
-    for (let min = 0; min <= 1440; min += step) {
-      const x = minX(min);
-      const y = valY(getVal(min));
-      d += min === 0 ? `M${x},${y}` : ` L${x},${y}`;
+  function brightnessAt(minute) {
+    const night = nightAmount(minute);
+    return settings.brightness.day_percent * (1 - night) + settings.brightness.night_percent * night;
+  }
+
+  function warmthAt(minute) {
+    const night = nightAmount(minute);
+    const day = kelvinToWarmth(settings.color.day_temp_k);
+    const nightValue = kelvinToWarmth(settings.color.night_temp_k);
+    return day * (1 - night) + nightValue * night;
+  }
+
+  function kelvinToWarmth(kelvin) {
+    return ((10000 - kelvin) / 8200) * 100;
+  }
+
+  function warmthToKelvin(warmth) {
+    return Math.round((10000 - (warmth / 100) * 8200) / 100) * 100;
+  }
+
+  function pathFor(getValue) {
+    let path = "";
+    for (let minute = 0; minute <= 1440; minute += 5) {
+      path += `${minute ? " L" : "M"}${xForMinute(minute).toFixed(1)},${yForPercent(getValue(minute)).toFixed(1)}`;
     }
-    return d;
+    return path;
   }
 
-  // Brightness curve value at minute
-  function brightnessVal(min) {
-    if (!settings) return 100;
-    const t = intensityAt(min);
-    return settings.brightness.day_percent + (settings.brightness.night_percent - settings.brightness.day_percent) * t;
+  let brightnessPath = $derived(sunTimes ? pathFor(brightnessAt) : "");
+  let warmthPath = $derived(sunTimes ? pathFor(warmthAt) : "");
+  let currentMinute = $derived(now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60);
+
+  function startDrag(kind, event) {
+    if (event.button !== 0) return;
+    dragging = { kind, pointerId: event.pointerId };
+    svgEl?.setPointerCapture(event.pointerId);
+    event.preventDefault();
   }
 
-  // Color/gamma curve value at minute (normalized: day=100%, night=0%)
-  function colorVal(min) {
-    const t = intensityAt(min);
-    return 100 - t * 100; // 100% = full day temp, 0% = full night temp (warm)
+  function pointerMove(event) {
+    if (!dragging || !svgEl) return;
+    const point = svgEl.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    const local = point.matrixTransform(svgEl.getScreenCTM().inverse());
+    const percent = Math.round(Math.max(0, Math.min(100, ((PAD.top + PLOT_H - local.y) / PLOT_H) * 100)));
+
+    if (dragging.kind === "brightness-day") settings.brightness.day_percent = Math.max(30, percent);
+    if (dragging.kind === "brightness-night") settings.brightness.night_percent = Math.max(10, percent);
+    if (dragging.kind === "warmth-day") settings.color.day_temp_k = Math.max(4000, Math.min(10000, warmthToKelvin(percent)));
+    if (dragging.kind === "warmth-night") settings.color.night_temp_k = Math.max(1800, Math.min(5000, warmthToKelvin(percent)));
   }
 
-  let brightnessPath = $derived(settings ? curvePath(brightnessVal) : "");
-  let colorPath = $derived(settings ? curvePath(colorVal) : "");
-
-  // Current time marker
-  let currentMinute = $derived(() => {
-    const h = currentTime.getHours();
-    const m = currentTime.getMinutes();
-    return h * 60 + m;
-  });
-
-  let currentX = $derived(minX(currentMinute()));
-
-  // Drag handling for curves
-  function onPointerDown(type, e) {
-    if (e.button !== 0) return; // Left button only
-    dragging = { type, x: e.clientX };
-    e.target.setPointerCapture?.(e.pointerId);
-    e.preventDefault();
-  }
-
-  function onPointerMove(e) {
-    if (!dragging || !svgEl || !settings) return;
-    
-    const rect = svgEl.getBoundingClientRect();
-    const py = e.clientY - rect.top;
-    const val = Math.round(yToVal(py));
-
-    if (dragging.type === 'brightness-day') {
-      settings.brightness.day_percent = Math.max(30, Math.min(100, val));
-    } else if (dragging.type === 'brightness-night') {
-      settings.brightness.night_percent = Math.max(10, Math.min(100, val));
-    } else if (dragging.type === 'color-day') {
-      // Map back to color temp: 100% = day temp, 0% = night temp
-      const dayK = 4000 + val * 60; // 4000-10000K range
-      settings.color.day_temp_k = Math.max(4000, Math.min(10000, Math.round(dayK / 100) * 100));
-    } else if (dragging.type === 'color-night') {
-      const nightK = 1800 + val * 32; // 1800-5000K range  
-      settings.color.night_temp_k = Math.max(1800, Math.min(5000, Math.round(nightK / 100) * 100));
-    }
-  }
-
-  function onPointerUp() {
+  function stopDrag(event) {
+    if (!dragging) return;
+    if (svgEl?.hasPointerCapture(dragging.pointerId)) svgEl.releasePointerCapture(dragging.pointerId);
     dragging = null;
   }
 
-  function fmtTime(min) {
-    const h = Math.floor(min / 60);
-    const m = min % 60;
-    return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+  function formatClock(date) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
-
-  // Hour grid lines
-  const hours = Array.from({ length: 25 }, (_, i) => i);
 </script>
 
-<div class="curves-wrap">
-  <svg
-    bind:this={svgEl}
-    viewBox="0 0 {W} {H}"
-    class="curves-svg"
-    onpointermove={onPointerMove}
-    onpointerup={onPointerUp}
-    onpointerleave={onPointerUp}
-  >
-    <!-- Grid: hour lines -->
-    {#each hours as h}
-      <line
-        x1={minX(h * 60)} y1={PAD_T}
-        x2={minX(h * 60)} y2={PAD_T + PLOT_H}
-        class="grid-line"
-        class:major={h % 6 === 0}
-      />
-      {#if h % 3 === 0 && h < 24}
-        <text x={minX(h * 60)} y={H - 8} class="axis-label">{h}h</text>
+<div class="schedule-card">
+  <div class="schedule-header">
+    <div>
+      <span class="eyebrow">Today</span>
+      <strong>{formatClock(now)}</strong>
+    </div>
+    <div class="solar-times" aria-live="polite">
+      <span><i class="sunrise-dot"></i>Sunrise <b>{sunTimes?.sunrise ?? "--:--"}</b></span>
+      <span><i class="sunset-dot"></i>Sunset <b>{sunTimes?.sunset ?? "--:--"}</b></span>
+    </div>
+  </div>
+
+  {#if solarError}<p class="error">Could not calculate solar times for this location.</p>{/if}
+
+  <svg bind:this={svgEl} viewBox="0 0 {W} {H}" class="chart" role="application" aria-label="Draggable 24-hour brightness and color schedule" onpointermove={pointerMove} onpointerup={stopDrag} onpointercancel={stopDrag}>
+    {#each [0, 25, 50, 75, 100] as value}
+      <line x1={PAD.left} y1={yForPercent(value)} x2={W - PAD.right} y2={yForPercent(value)} class="grid horizontal" />
+      <text x={PAD.left - 10} y={yForPercent(value) + 4} class="axis y">{value}</text>
+    {/each}
+    {#each hours as hour}
+      {#if hour % 3 === 0}
+        <line x1={xForMinute(hour * 60)} y1={PAD.top} x2={xForMinute(hour * 60)} y2={PAD.top + PLOT_H} class="grid" />
+        <text x={xForMinute(hour * 60)} y={H - 14} class="axis">{String(hour).padStart(2, "0")}:00</text>
       {/if}
     {/each}
 
-    <!-- Y axis labels -->
-    <text x={8} y={valY(100) + 5} class="axis-label">100%</text>
-    <text x={8} y={valY(75) + 5} class="axis-label">75%</text>
-    <text x={8} y={valY(50) + 5} class="axis-label">50%</text>
-    <text x={8} y={valY(25) + 5} class="axis-label">25%</text>
-    <text x={8} y={valY(0) + 5} class="axis-label">0%</text>
-
-    <!-- Night region shading -->
     {#if sunTimes}
-      <rect
-        x={minX(toMin(sunTimes.sunset))}
-        y={PAD_T}
-        width={minX(1440) - minX(toMin(sunTimes.sunset))}
-        height={PLOT_H}
-        class="night-shade"
-      />
-      <rect
-        x={minX(0)}
-        y={PAD_T}
-        width={minX(toMin(sunTimes.sunrise)) - minX(0)}
-        height={PLOT_H}
-        class="night-shade"
-      />
-    {/if}
-
-    <!-- Brightness curve -->
-    {#if brightnessPath}
+      <rect x={PAD.left} y={PAD.top} width={xForMinute(toMinute(sunTimes.sunrise)) - PAD.left} height={PLOT_H} class="night" />
+      <rect x={xForMinute(toMinute(sunTimes.sunset))} y={PAD.top} width={W - PAD.right - xForMinute(toMinute(sunTimes.sunset))} height={PLOT_H} class="night" />
+      <line x1={xForMinute(toMinute(sunTimes.sunrise))} y1={PAD.top} x2={xForMinute(toMinute(sunTimes.sunrise))} y2={PAD.top + PLOT_H} class="solar sunrise" />
+      <line x1={xForMinute(toMinute(sunTimes.sunset))} y1={PAD.top} x2={xForMinute(toMinute(sunTimes.sunset))} y2={PAD.top + PLOT_H} class="solar sunset" />
       <path d={brightnessPath} class="curve brightness" />
-      <!-- Interactive control points -->
-      <circle
-        cx={minX(720)}
-        cy={valY(settings?.brightness?.day_percent ?? 100)}
-        r="6"
-        class="control-point brightness"
-        onpointerdown={(e) => onPointerDown('brightness-day', e)}
-      />
-      <circle
-        cx={minX(60)}
-        cy={valY(settings?.brightness?.night_percent ?? 50)}
-        r="6"
-        class="control-point brightness"
-        onpointerdown={(e) => onPointerDown('brightness-night', e)}
-      />
-    {/if}
+      <path d={warmthPath} class="curve warmth" />
 
-    <!-- Color/gamma curve -->
-    {#if colorPath}
-      <path d={colorPath} class="curve color" />
-      <!-- Interactive control points -->
-      <circle
-        cx={minX(720)}
-        cy={valY(colorVal(720))}
-        r="6"
-        class="control-point color"
-        onpointerdown={(e) => onPointerDown('color-day', e)}
-      />
-      <circle
-        cx={minX(60)}
-        cy={valY(colorVal(60))}
-        r="6"
-        class="control-point color"
-        onpointerdown={(e) => onPointerDown('color-night', e)}
-      />
-    {/if}
-
-    <!-- Sunrise/Sunset markers -->
-    {#if sunTimes}
-      <g class="time-marker sunrise">
-        <line 
-          x1={minX(toMin(sunTimes.sunrise))} 
-          y1={PAD_T} 
-          x2={minX(toMin(sunTimes.sunrise))} 
-          y2={PAD_T + PLOT_H} 
-          class="time-line sunrise"
-        />
-        <text 
-          x={minX(toMin(sunTimes.sunrise))} 
-          y={PAD_T - 5} 
-          class="time-label sunrise"
-        >
-          ☀️ {sunTimes.sunrise}
-        </text>
+      <g class="handle brightness" role="slider" aria-label="Night brightness" aria-valuemin="10" aria-valuemax="100" aria-valuenow={settings.brightness.night_percent} tabindex="0" onpointerdown={(event) => startDrag("brightness-night", event)}>
+        <circle cx={xForMinute(60)} cy={yForPercent(settings.brightness.night_percent)} r="9" /><title>Night brightness: {settings.brightness.night_percent}%</title>
       </g>
-      <g class="time-marker sunset">
-        <line 
-          x1={minX(toMin(sunTimes.sunset))} 
-          y1={PAD_T} 
-          x2={minX(toMin(sunTimes.sunset))} 
-          y2={PAD_T + PLOT_H} 
-          class="time-line sunset"
-        />
-        <text 
-          x={minX(toMin(sunTimes.sunset))} 
-          y={PAD_T - 5} 
-          class="time-label sunset"
-        >
-          🌙 {sunTimes.sunset}
-        </text>
+      <g class="handle brightness" role="slider" aria-label="Day brightness" aria-valuemin="30" aria-valuemax="100" aria-valuenow={settings.brightness.day_percent} tabindex="0" onpointerdown={(event) => startDrag("brightness-day", event)}>
+        <circle cx={xForMinute(720)} cy={yForPercent(settings.brightness.day_percent)} r="9" /><title>Day brightness: {settings.brightness.day_percent}%</title>
+      </g>
+      <g class="handle warmth" role="slider" aria-label="Night color warmth" aria-valuemin="1800" aria-valuemax="5000" aria-valuenow={settings.color.night_temp_k} tabindex="0" onpointerdown={(event) => startDrag("warmth-night", event)}>
+        <circle cx={xForMinute(90)} cy={yForPercent(kelvinToWarmth(settings.color.night_temp_k))} r="9" /><title>Night color: {settings.color.night_temp_k}K</title>
+      </g>
+      <g class="handle warmth" role="slider" aria-label="Day color warmth" aria-valuemin="4000" aria-valuemax="10000" aria-valuenow={settings.color.day_temp_k} tabindex="0" onpointerdown={(event) => startDrag("warmth-day", event)}>
+        <circle cx={xForMinute(750)} cy={yForPercent(kelvinToWarmth(settings.color.day_temp_k))} r="9" /><title>Day color: {settings.color.day_temp_k}K</title>
       </g>
     {/if}
 
-    <!-- Current time marker -->
-    <g class="time-marker current">
-      <line 
-        x1={currentX} 
-        y1={PAD_T} 
-        x2={currentX} 
-        y2={PAD_T + PLOT_H} 
-        class="time-line current"
-      />
-      <text 
-        x={currentX} 
-        y={H - 28} 
-        class="time-label current"
-      >
-        ▼ {fmtTime(currentMinute())}
-      </text>
-    </g>
+    <line x1={xForMinute(currentMinute)} y1={PAD.top - 8} x2={xForMinute(currentMinute)} y2={PAD.top + PLOT_H} class="current" />
+    <circle cx={xForMinute(currentMinute)} cy={PAD.top - 10} r="4" class="current-dot" />
   </svg>
 
-  <!-- Legend -->
   <div class="legend">
-    <div class="legend-item">
-      <span class="swatch brightness"></span> 
-      <span>Monitor brightness (drag circles to adjust)</span>
-    </div>
-    <div class="legend-item">
-      <span class="swatch color"></span> 
-      <span>Color warmth / gamma (drag circles to adjust)</span>
-    </div>
-    <div class="legend-item">
-      <span class="indicator current"></span> 
-      <span>Current time</span>
-    </div>
+    <span><i class="key brightness"></i>Monitor brightness <b>{settings.brightness.night_percent}% / {settings.brightness.day_percent}%</b></span>
+    <span><i class="key warmth"></i>Red hue / gamma <b>{settings.color.night_temp_k}K / {settings.color.day_temp_k}K</b></span>
+    <span class="drag-hint">Drag any circle up or down</span>
   </div>
 </div>
 
 <style>
-  .curves-wrap {
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 0.75rem;
-    background: #fafafa;
-  }
-
-  .curves-svg {
-    width: 100%;
-    height: auto;
-    touch-action: none;
-    user-select: none;
-  }
-
-  .grid-line {
-    stroke: #e8e8e8;
-    stroke-width: 0.5;
-  }
-
-  .grid-line.major {
-    stroke: #ccc;
-    stroke-width: 1;
-  }
-
-  .axis-label {
-    font-size: 10px;
-    fill: #999;
-    text-anchor: middle;
-    font-family: system-ui, sans-serif;
-  }
-
-  .night-shade {
-    fill: #1a1a3a;
-    opacity: 0.08;
-  }
-
-  .curve {
-    fill: none;
-    stroke-width: 3;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    pointer-events: none;
-  }
-
-  .curve.brightness {
-    stroke: #4a9eff;
-  }
-
-  .curve.color {
-    stroke: #ff8c42;
-  }
-
-  .control-point {
-    cursor: grab;
-    stroke-width: 2;
-    transition: r 0.15s;
-  }
-
-  .control-point:hover {
-    r: 8;
-  }
-
-  .control-point:active {
-    cursor: grabbing;
-  }
-
-  .control-point.brightness {
-    fill: #4a9eff;
-    stroke: #fff;
-  }
-
-  .control-point.color {
-    fill: #ff8c42;
-    stroke: #fff;
-  }
-
-  .time-line {
-    stroke-width: 2;
-    stroke-dasharray: 5 3;
-    pointer-events: none;
-  }
-
-  .time-line.sunrise {
-    stroke: #ffa500;
-  }
-
-  .time-line.sunset {
-    stroke: #8b5cf6;
-  }
-
-  .time-line.current {
-    stroke: #22c55e;
-    stroke-width: 2.5;
-  }
-
-  .time-label {
-    font-size: 11px;
-    text-anchor: middle;
-    font-weight: 600;
-    font-family: system-ui, sans-serif;
-    pointer-events: none;
-  }
-
-  .time-label.sunrise {
-    fill: #ffa500;
-  }
-
-  .time-label.sunset {
-    fill: #8b5cf6;
-  }
-
-  .time-label.current {
-    fill: #22c55e;
-  }
-
-  .legend {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.6rem 0.5rem 0.2rem;
-    font-size: 0.8rem;
-    color: #666;
-  }
-
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .swatch {
-    display: inline-block;
-    width: 20px;
-    height: 4px;
-    border-radius: 2px;
-  }
-
-  .swatch.brightness {
-    background: #4a9eff;
-  }
-
-  .swatch.color {
-    background: #ff8c42;
-  }
-
-  .indicator {
-    display: inline-block;
-    width: 20px;
-    height: 3px;
-    border-radius: 1px;
-  }
-
-  .indicator.current {
-    background: #22c55e;
-  }
-
+  .schedule-card { border: 1px solid #dfe3ea; border-radius: 14px; background: #fff; overflow: hidden; box-shadow: 0 8px 30px rgba(20, 28, 45, .06); }
+  .schedule-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1rem 1.2rem .4rem; }
+  .schedule-header > div:first-child { display: flex; flex-direction: column; }
+  .eyebrow { color: #7a8394; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
+  .schedule-header strong { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+  .solar-times { display: flex; gap: 1rem; font-size: .78rem; color: #687184; }
+  .solar-times span { display: flex; align-items: center; gap: .35rem; }
+  .solar-times b { color: inherit; font-variant-numeric: tabular-nums; }
+  .sunrise-dot, .sunset-dot { width: 8px; height: 8px; border-radius: 50%; background: #f7b731; }
+  .sunset-dot { background: #8c6ff7; }
+  .error { margin: .2rem 1.2rem; color: #b42318; font-size: .78rem; }
+  .chart { display: block; width: 100%; height: auto; min-height: 230px; touch-action: none; user-select: none; }
+  .grid { stroke: #edf0f5; stroke-width: 1; }
+  .horizontal { stroke-dasharray: 3 4; }
+  .axis { fill: #8a93a3; font: 11px system-ui; text-anchor: middle; }
+  .axis.y { text-anchor: end; }
+  .night { fill: #4b5875; opacity: .07; pointer-events: none; }
+  .solar { stroke-width: 1.5; stroke-dasharray: 5 4; pointer-events: none; }
+  .solar.sunrise { stroke: #e9a31b; } .solar.sunset { stroke: #7658df; }
+  .curve { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .curve.brightness { stroke: #3578e5; } .curve.warmth { stroke: #ef7b45; }
+  .handle { cursor: ns-resize; }
+  .handle circle { fill: white; stroke-width: 4; filter: drop-shadow(0 2px 3px rgba(0,0,0,.18)); }
+  .handle.brightness circle { stroke: #3578e5; } .handle.warmth circle { stroke: #ef7b45; }
+  .current { stroke: #14a673; stroke-width: 2; pointer-events: none; }
+  .current-dot { fill: #14a673; pointer-events: none; }
+  .legend { display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; align-items: center; padding: .6rem 1.2rem 1rem; color: #687184; font-size: .78rem; }
+  .legend span { display: flex; gap: .4rem; align-items: center; }
+  .legend b { color: #30384a; font-variant-numeric: tabular-nums; }
+  .key { width: 20px; height: 4px; border-radius: 3px; }
+  .key.brightness { background: #3578e5; } .key.warmth { background: #ef7b45; }
+  .drag-hint { margin-left: auto; color: #8a93a3; }
+  @media (max-width: 640px) { .schedule-header, .solar-times { align-items: flex-start; flex-direction: column; } .solar-times { gap: .35rem; } .drag-hint { margin-left: 0; } }
   @media (prefers-color-scheme: dark) {
-    .curves-wrap {
-      border-color: #444;
-      background: #1e1e30;
-    }
-
-    .grid-line {
-      stroke: #333;
-    }
-
-    .grid-line.major {
-      stroke: #444;
-    }
-
-    .axis-label {
-      fill: #777;
-    }
-
-    .night-shade {
-      fill: #000;
-      opacity: 0.2;
-    }
-
-    .legend {
-      color: #aaa;
-    }
+    .schedule-card { background: #202231; border-color: #373a4d; box-shadow: none; }
+    .grid { stroke: #343748; } .axis { fill: #858a9b; } .night { fill: #02030a; opacity: .18; }
+    .handle circle { fill: #202231; } .legend b { color: #e7e9ee; }
   }
 </style>

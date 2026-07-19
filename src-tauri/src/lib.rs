@@ -37,8 +37,8 @@ fn jump_to_night(engine: State<'_, Arc<FadeEngine>>, night: bool) {
 
 /// Tauri command: get today's sun times.
 #[tauri::command]
-fn get_sun_times(settings: State<'_, config::Settings>) -> serde_json::Value {
-    let sun = sun::calculate_today(settings.location.latitude, settings.location.longitude);
+fn get_sun_times(latitude: f64, longitude: f64) -> serde_json::Value {
+    let sun = sun::calculate_today(latitude.clamp(-90.0, 90.0), longitude.clamp(-180.0, 180.0));
     use chrono::Timelike;
     serde_json::json!({
         "sunrise": format!("{:02}:{:02}", sun.sunrise.time().hour(), sun.sunrise.time().minute()),

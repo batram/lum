@@ -10,22 +10,30 @@
   let newApp = $state("");
   let monitorBrightness = $state([]);
   let saveIndicator = $state("");
+  let loadError = $state("");
 
   let debounceTimer = null;
   let brightnessInterval = null;
 
-  onMount(async () => {
-    settings = await invoke("get_settings");
-    monitors = await invoke("get_monitors");
-    autostart = await invoke("get_autostart");
-
-    // Read initial brightness from hardware
-    await pollBrightness();
-
-    // Poll monitor brightness every 3 seconds
-    brightnessInterval = setInterval(pollBrightness, 3000);
-
+  onMount(() => {
+    let disposed = false;
+    (async () => {
+      try {
+        settings = await invoke("get_settings");
+        const [monitorResult, autostartResult] = await Promise.allSettled([
+          invoke("get_monitors"), invoke("get_autostart")
+        ]);
+        if (disposed) return;
+        if (monitorResult.status === "fulfilled") monitors = monitorResult.value;
+        if (autostartResult.status === "fulfilled") autostart = autostartResult.value;
+        await pollBrightness();
+        brightnessInterval = setInterval(pollBrightness, 3000);
+      } catch (error) {
+        if (!disposed) loadError = `Settings could not be loaded: ${error}`;
+      }
+    })();
     return () => {
+      disposed = true;
       clearInterval(brightnessInterval);
     };
   });
@@ -49,9 +57,13 @@
 
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
-      await invoke("save_settings", { settings });
-      saveIndicator = "saved";
-      setTimeout(() => (saveIndicator = ""), 1500);
+      try {
+        await invoke("save_settings", { settings });
+        saveIndicator = "saved";
+      } catch {
+        saveIndicator = "error";
+      }
+      setTimeout(() => (saveIndicator = ""), 1800);
     }, 500);
   });
 
@@ -81,15 +93,18 @@
 <main class="container">
   <header>
     <a href="/" class="back">← Status</a>
-    <h1>Settings</h1>
+    <div>
+      <h1>Settings</h1>
+      <p>Shape how your displays change through the day.</p>
+    </div>
   </header>
 
   {#if settings}
     <!-- 24h Curves Overview -->
     <section class="curves-section">
-      <h2>24-Hour Schedule</h2>
-      <p class="hint">Drag the circles on the curves to adjust brightness and color temperature</p>
-      <Curves {settings} onThemeChange={() => {}} />
+      <h2>24-hour schedule</h2>
+      <p class="hint">Drag the blue and orange circles vertically to set the night and day levels.</p>
+      <Curves {settings} />
     </section>
 
     <!-- Rendering Engine -->
@@ -257,8 +272,10 @@
 
     <!-- Auto-save indicator -->
     {#if saveIndicator}
-      <div class="save-toast">✓ Saved</div>
+      <div class="save-toast" class:error={saveIndicator === "error"}>{saveIndicator === "saved" ? "✓ Saved" : "Could not save settings"}</div>
     {/if}
+  {:else if loadError}
+    <p class="load-error">{loadError}</p>
   {:else}
     <p>Loading settings...</p>
   {/if}
@@ -267,7 +284,7 @@
 <style>
   .container {
     padding: 1.5rem 2rem;
-    max-width: 860px;
+    max-width: 980px;
     margin: 0 auto;
     font-family: "Segoe UI", system-ui, sans-serif;
     font-size: 14px;
@@ -292,9 +309,11 @@
   }
 
   h1 {
-    font-size: 1.3rem;
+    font-size: 1.55rem;
     margin: 0;
   }
+
+  header p { margin: 0.15rem 0 0; color: #7b8190; font-size: 0.85rem; }
 
   h2 {
     font-size: 0.9rem;
@@ -306,9 +325,11 @@
   }
 
   section {
-    margin-bottom: 1.5rem;
-    padding-bottom: 1.25rem;
-    border-bottom: 1px solid #eee;
+    margin-bottom: 1rem;
+    padding: 1.15rem 1.25rem;
+    border: 1px solid #e5e7ec;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.72);
   }
 
   .grid {
@@ -477,6 +498,9 @@
     animation: fadeIn 0.2s ease;
   }
 
+  .save-toast.error { background: #a63838; }
+  .load-error { padding: 1rem; border-radius: 8px; background: #fff0f0; color: #9b2929; }
+
   @keyframes fadeIn {
     from { opacity: 0; transform: translateX(-50%) translateY(4px); }
     to { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -492,7 +516,8 @@
     }
 
     section {
-      border-color: #333;
+      border-color: #343646;
+      background: rgba(36, 37, 53, 0.8);
     }
 
     .grid label,

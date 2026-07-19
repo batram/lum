@@ -1,0 +1,26 @@
+﻿[
+    {
+        "RegistryPath":  "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default$windows.data.bluelightreduction.bluelightreductionstate",
+        "LastWriteTime":  null,
+        "BackupFile":  "C:\\Users\\mjb\\develop\\lum\\night-light-registry-backup\\01-default_windows.data.bluelightreduction.bluelightreductionstate.reg",
+        "SHA256":  "49AC2E2A0FAC644358A55F0030B10C8F0BE97E5236047D4A30AC2890348BE0A6"
+    },
+    {
+        "RegistryPath":  "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default$windows.data.bluelightreduction.settings",
+        "LastWriteTime":  null,
+        "BackupFile":  "C:\\Users\\mjb\\develop\\lum\\night-light-registry-backup\\02-default_windows.data.bluelightreduction.settings.reg",
+        "SHA256":  "436C66D76A7CC9407BA94188970475EC67CACDB51D36A8C246E511246C0E2D72"
+    },
+    {
+        "RegistryPath":  "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\{0289d3c1-daa4-47d3-b354-7fa4a1fef512}$windows.data.bluelightreduction.bluelightreductionstateperdevice",
+        "LastWriteTime":  null,
+        "BackupFile":  "C:\\Users\\mjb\\develop\\lum\\night-light-registry-backup\\03-_0289d3c1-daa4-47d3-b354-7fa4a1fef512__windows.data.bluelightreduction.bluelightreductionstateperdevice.reg",
+        "SHA256":  "E39CE7F96711F7F74004ABC08683CBA7DDC87A84790C459D66ED4484A9D5BA81"
+    },
+    {
+        "RegistryPath":  "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\{0289d3c1-daa4-47d3-b354-7fa4a1fef512}$windows.data.bluelightreduction.settingsperdevice",
+        "LastWriteTime":  null,
+        "BackupFile":  "C:\\Users\\mjb\\develop\\lum\\night-light-registry-backup\\04-_0289d3c1-daa4-47d3-b354-7fa4a1fef512__windows.data.bluelightreduction.settingsperdevice.reg",
+        "SHA256":  "F4865C260608CA4D7A21A937F447144A1681395D5E0240A616285C03A0DBC8FC"
+    }
+]
