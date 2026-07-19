@@ -23,6 +23,7 @@
   let interacting = false;
   let pendingAdjustment = null;
   let pendingAutomatic = null;
+  let persisting = $state(false);
   let requestVersion = 0;
 
   onMount(() => {
@@ -158,6 +159,41 @@
     });
   }
 
+  async function keepAdjustment() {
+    if (persisting) return;
+    persisting = true;
+    error = "";
+    clearTimeout(adjustmentTimer);
+    adjustmentTimer = null;
+    requestVersion += 1;
+    const target = persistTarget;
+    try {
+      const settings = await invoke("get_settings");
+      const hardware = Math.round(Number(hardwareBrightness));
+      const overlay = Math.round(Number(overlayBrightness));
+      const colorTemperature = Math.round(Number(temperature));
+      if (target === "night") {
+        settings.brightness.hardware_night_percent = hardware;
+        settings.brightness.overlay_night_percent = overlay;
+        settings.color.night_temp_k = colorTemperature;
+      } else {
+        settings.brightness.hardware_day_percent = hardware;
+        settings.brightness.overlay_day_percent = overlay;
+        settings.color.day_temp_k = colorTemperature;
+      }
+      await invoke("save_settings", { settings });
+      await invoke("reset_temporary_adjustments");
+      pendingAdjustment = null;
+      state = { ...state, hardware_offset_pct: 0, overlay_offset_pct: 0, temperature_offset_k: 0, adjustment_expires_at: null };
+      await refresh();
+    } catch (reason) {
+      error = `Could not keep ${target} settings: ${reason}`;
+      queueAdjustment();
+    } finally {
+      persisting = false;
+    }
+  }
+
   async function openSettings() {
     await invoke("open_settings_window");
   }
@@ -167,6 +203,7 @@
   }
 
   let adjusted = $derived(state.hardware_offset_pct !== 0 || state.overlay_offset_pct !== 0 || state.temperature_offset_k !== 0);
+  let persistTarget = $derived(state.intensity >= 0.5 ? "night" : "day");
   let temperaturePercent = $derived(((Number(temperature) - 1800) / 8200) * 100);
   let statusLine = $derived(
     state.effects_off ? "Effects are off" :
@@ -211,7 +248,10 @@
     {#if adjusted}
       <div class="adjustment-note">
         <span>Adjusted until {state.adjustment_expires_at ?? state.next_transition_time}</span>
-        <button type="button" onclick={resetSchedule}>Reset</button>
+        <div class="adjustment-actions">
+          <button type="button" class="reset-button" onclick={resetSchedule} disabled={persisting}>Reset</button>
+          <button type="button" class="keep-button" onclick={keepAdjustment} disabled={persisting}>{persisting ? "Saving…" : `Keep for ${persistTarget}`}</button>
+        </div>
       </div>
     {:else if !state.automatic}
       <button type="button" class="reset-wide" onclick={resetSchedule}>Return to schedule</button>
@@ -264,7 +304,12 @@
   input:disabled{opacity:.42;cursor:default}
   .adjustment-state{min-height:27px;padding:2px 1px 4px}
   .adjustment-note{display:flex;align-items:center;justify-content:space-between;min-height:23px;color:#9298a7;font-size:9.5px}
-  .adjustment-note button{padding:4px 8px;border-radius:7px;background:rgba(121,168,255,.12);color:#a9c8ff;font-size:9.5px}
+  .adjustment-actions{display:flex;align-items:center;gap:5px}
+  .adjustment-note button{padding:4px 8px;border-radius:7px;font-size:9.5px;white-space:nowrap}
+  .reset-button{background:rgba(255,255,255,.055);color:#aab0bd}
+  .keep-button{background:rgba(121,168,255,.16);color:#b9d2ff}
+  .adjustment-note button:hover,.adjustment-note button:focus-visible{filter:brightness(1.22);outline:1px solid rgba(158,193,255,.45);outline-offset:1px}
+  .adjustment-note button:disabled{opacity:.55;cursor:default;filter:none}
   .reset-wide{width:100%;padding:5px;border-radius:7px;background:rgba(121,168,255,.13);color:#b8d1ff;font-size:10px}
   .bottom-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:auto;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)}
   .mode-row{display:flex;align-items:center;gap:9px;min-width:0}
