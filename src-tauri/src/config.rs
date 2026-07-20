@@ -29,6 +29,10 @@ pub struct Settings {
     /// User-configurable global keyboard shortcuts.
     #[serde(default)]
     pub hotkeys: HotkeyConfig,
+
+    /// Advanced quick-panel interaction preferences.
+    #[serde(default)]
+    pub developer: DeveloperConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,10 +105,40 @@ impl Default for HotkeyConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrayClickBehavior {
+    Immediate,
+    ImmediateWithSettings,
+    WindowsTimed,
+}
+
+impl Default for TrayClickBehavior {
+    fn default() -> Self {
+        Self::WindowsTimed
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeveloperConfig {
+    pub tray_click_behavior: TrayClickBehavior,
+    pub close_on_focus_loss: bool,
+}
+
+impl Default for DeveloperConfig {
+    fn default() -> Self {
+        Self {
+            tray_click_behavior: TrayClickBehavior::WindowsTimed,
+            close_on_focus_loss: true,
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             location: Location {
                 // Default: New York City
                 latitude: 40.7128,
@@ -137,6 +171,7 @@ impl Default for Settings {
                 "lightroom.exe".to_string(),
             ],
             hotkeys: HotkeyConfig::default(),
+            developer: DeveloperConfig::default(),
         }
     }
 }

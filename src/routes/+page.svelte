@@ -313,7 +313,7 @@
   :global(html) { color-scheme: dark; background: transparent; }
   :global(body) { margin: 0; padding: 10px; overflow: hidden; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; background: transparent; color: #f5f6fa; }
   :global(button), :global(input) { font: inherit; }
-  .panel { position:relative;display:flex;flex-direction:column;height:calc(100vh - 20px);padding:11px 15px 10px;border:1px solid rgba(255,255,255,.14);border-radius:16px;background:linear-gradient(155deg,rgba(35,37,48,.97),rgba(24,25,33,.975));box-shadow:0 6px 16px rgba(0,0,0,.3);transition:opacity .15s ease }
+  .panel { position:relative;display:flex;flex-direction:column;height:calc(100vh - 20px);padding:11px 15px 10px;border:1px solid rgba(255,255,255,.14);border-radius:16px;background:linear-gradient(155deg,rgba(35,37,48,.97),rgba(24,25,33,.975));box-shadow:0 2px 7px rgba(0,0,0,.2);transition:opacity .15s ease }
   .panel.loading { opacity: .72; }
   button { border: 0; cursor: pointer; color: inherit; }
   .solar-strip{display:flex;align-items:center;justify-content:space-between;padding:0 2px 8px;border-bottom:1px solid rgba(255,255,255,.07);font-variant-numeric:tabular-nums}

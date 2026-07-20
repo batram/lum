@@ -315,22 +315,26 @@ pub fn run() {
                             // until we know whether this interaction is a single or double click.
                             tray_interaction_for_tray.store(true, Ordering::Relaxed);
                         }
-                        // Double-click opens the full settings window.
                         TrayIconEvent::DoubleClick {
                             button: MouseButton::Left,
                             ..
                         } => {
-                            eprintln!("[lum][tray] double click -> settings");
-                            // Cancel the delayed single-click action before opening settings.
-                            click_generation_for_tray.fetch_add(1, Ordering::Relaxed);
                             suppress_click_up_for_tray.store(true, Ordering::Relaxed);
-                            if let Some(panel) = app.get_webview_window("main") {
-                                let _ = panel.hide();
-                            }
-                            if let Some(settings) = app.get_webview_window("settings") {
-                                let _ = settings.show();
-                                let _ = settings.center();
-                                let _ = settings.set_focus();
+                            let behavior = config::Settings::load().developer.tray_click_behavior;
+                            if behavior == config::TrayClickBehavior::Immediate {
+                                eprintln!("[lum][tray] double click ignored in immediate mode");
+                            } else {
+                                eprintln!("[lum][tray] double click -> settings");
+                                // Cancel a pending Windows-timed single-click action.
+                                click_generation_for_tray.fetch_add(1, Ordering::Relaxed);
+                                if let Some(panel) = app.get_webview_window("main") {
+                                    let _ = panel.hide();
+                                }
+                                if let Some(settings) = app.get_webview_window("settings") {
+                                    let _ = settings.show();
+                                    let _ = settings.center();
+                                    let _ = settings.set_focus();
+                                }
                             }
                             tray_interaction_for_tray.store(false, Ordering::Relaxed);
                         }
@@ -351,7 +355,12 @@ pub fn run() {
                                 tray_interaction_for_tray.store(false, Ordering::Relaxed);
                                 return;
                             }
-                            let delay_ms = unsafe { GetDoubleClickTime() }.max(200);
+                            let behavior = config::Settings::load().developer.tray_click_behavior;
+                            let delay_ms = if behavior == config::TrayClickBehavior::WindowsTimed {
+                                unsafe { GetDoubleClickTime() }.max(200)
+                            } else {
+                                0
+                            };
                             let recently_dismissed_by_focus = last_focus_dismissal_for_tray
                                 .lock()
                                 .ok()
@@ -428,6 +437,10 @@ pub fn run() {
             }
             if window.label() == "main" {
                 if let tauri::WindowEvent::Focused(false) = event {
+                    if !config::Settings::load().developer.close_on_focus_loss {
+                        eprintln!("[lum][panel] focus lost; dismissal disabled");
+                        return;
+                    }
                     eprintln!("[lum][panel] focus lost");
                     // Windows can report focus loss before it delivers the tray mouse-down.
                     // Defer dismissal briefly so the tray handler can mark the interaction;

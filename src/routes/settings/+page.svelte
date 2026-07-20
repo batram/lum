@@ -10,6 +10,7 @@
     ["exceptions", "⊘", "Exceptions"],
     ["hotkeys", "⌨", "Hotkeys"],
     ["general", "⚙", "General"],
+    ["developer", "◇", "Developer"],
   ];
 
   const hotkeyRows = [
@@ -226,6 +227,26 @@
         <section class="card rows">
           <label class="toggle-row"><span><strong>Start Lum with Windows</strong><small>Launch quietly in the notification area after sign-in.</small></span><input type="checkbox" checked={autostart} onchange={toggleAutostart} /></label>
         </section>
+      {:else if active === "developer"}
+        <header><p>Settings</p><h1>Developer</h1><span>Advanced quick-panel behavior and interaction experiments.</span></header>
+        <section class="card">
+          <div class="card-heading"><div><h2>Tray interaction</h2><p>Choose how Lum balances popup speed with double-click actions.</p></div></div>
+          <label class="select-row">
+            <span><strong>Tray click behavior</strong><small>
+              {settings.developer.tray_click_behavior === "windows_timed"
+                ? "Waits for the Windows double-click interval, avoiding popup flashes."
+                : settings.developer.tray_click_behavior === "immediate_with_settings"
+                  ? "Opens immediately; a double-click switches to Settings and may briefly show the popup."
+                  : "Opens immediately; double-click has no separate action."}
+            </small></span>
+            <select bind:value={settings.developer.tray_click_behavior} aria-label="Tray click behavior">
+              <option value="immediate">Immediate popup</option>
+              <option value="immediate_with_settings">Immediate + double-click Settings</option>
+              <option value="windows_timed">Windows double-click timing</option>
+            </select>
+          </label>
+          <label class="toggle-row"><span><strong>Close popup when focus is lost</strong><small>Turn this off to keep the quick panel open while using other windows.</small></span><input type="checkbox" bind:checked={settings.developer.close_on_focus_loss} /></label>
+        </section>
       {/if}
     {/if}
   </main>
@@ -269,9 +290,10 @@
   .card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 19px; }.card-heading p { margin: 5px 0 0; color: #858b98; font-size: 12px; }
   .field-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:12px; }.field-grid > label { display:grid;gap:7px;color:#aeb3bf;font-size:11px; }.number-field { display:flex;align-items:center;border:1px solid #3a3e49;border-radius:9px;background:#1a1b22;overflow:hidden; }.number-field input { width:72px;padding:9px;border:0;background:transparent;color:white;outline:none; }.number-field em { color:#737987;font-size:10px;font-style:normal; }
   .toggle-row { display:flex;align-items:center;justify-content:space-between;gap:20px;padding-top:17px;border-top:1px solid #2e313b; }.toggle-row > span { display:grid;gap:4px; }.toggle-row strong {font-size:12px}.toggle-row small{color:#858b98}.toggle-row input{width:38px;height:20px;accent-color:#6f9ce8}.rows{display:grid;gap:18px}.rows .toggle-row:first-child{padding-top:0;border-top:0}
+  .select-row{display:flex;align-items:center;justify-content:space-between;gap:28px;margin-bottom:17px}.select-row>span{display:grid;gap:4px;max-width:470px}.select-row strong{font-size:12px}.select-row small{color:#858b98;font-size:11px;line-height:1.45}.select-row select{min-width:250px;padding:9px 34px 9px 11px;border:1px solid #3a3e49;border-radius:9px;background:#191a21;color:#eef0f5;outline:none;font-size:11px}.select-row select:focus{border-color:#6c93d2;box-shadow:0 0 0 3px rgba(108,147,210,.12)}
   .empty{display:grid;justify-items:center;padding:30px 20px;color:#818795;text-align:center}.empty strong{margin-top:8px;color:#c4c8d0}.empty p{max-width:430px;margin:6px 0 0;font-size:11px}.empty.compact{padding:24px}.add-app{display:flex;gap:8px}.add-app input{flex:1;padding:10px 12px;border:1px solid #393d48;border-radius:9px;background:#191a21;color:white;outline:none}.add-app input:focus{border-color:#6c93d2}.add-app button,.secondary{padding:9px 13px;border:1px solid #424653;border-radius:9px;background:#2b2e38;cursor:pointer;font-size:11px}.inline-error{color:#ffaaa3;font-size:11px}.app-list{margin-top:13px}.app-list>div:not(.empty){display:flex;align-items:center;gap:11px;padding:12px 2px;border-top:1px solid #2e313b}.app-list strong{font-size:12px}.app-list button{margin-left:auto;border:0;background:transparent;color:#d78d89;cursor:pointer;font-size:11px}.app-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:#2b2e38;color:#959ba8}
   .location-summary{display:flex;align-items:center;gap:12px}.location-summary>span{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#2b3040;color:#8aaff0;font-size:18px}.location-summary>div{display:grid;gap:4px}.location-summary small{color:#858b98}.map-panel{margin-top:17px}.notice{display:grid;gap:5px;padding:16px;border-radius:12px}.notice.danger{background:#3b2327;color:#ffb5af}.loading{color:#8c929f}.error{color:#ffaaa3}
   .hotkey-list{display:grid}.hotkey-list label{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:13px 0;border-top:1px solid #2e313b}.hotkey-list label:first-child{padding-top:0;border-top:0}.hotkey-list label>span{display:grid;gap:4px}.hotkey-list strong{font-size:12px}.hotkey-list small{color:#858b98;font-size:11px}.hotkey-list input{width:160px;padding:9px 11px;border:1px solid #3a3e49;border-radius:9px;background:#191a21;color:#dce6fa;text-align:center;outline:none;font-size:12px;font-weight:600}.hotkey-list input:focus{border-color:#6c93d2;background:#1d2230;box-shadow:0 0 0 3px rgba(108,147,210,.12)}.hotkey-list input::placeholder{color:#696f7c;font-weight:400}.hotkey-note{margin:15px 0 0;padding-top:14px;border-top:1px solid #2e313b;color:#777d8a;font-size:10.5px}
-  @media(max-width:820px){.app-shell{grid-template-columns:72px minmax(0,1fr)}aside{padding-inline:9px}.logo strong,nav button:not(.active){font-size:0}.logo{justify-content:center;padding-inline:0}.logo span{font-size:25px}nav button{justify-content:center;padding:11px}nav button span{font-size:17px}.save-state{font-size:0;justify-content:center}.field-grid{grid-template-columns:1fr}.status-hero{grid-template-columns:auto 1fr}.live-values{grid-column:1/-1;padding-left:69px}}
+  @media(max-width:820px){.app-shell{grid-template-columns:72px minmax(0,1fr)}aside{padding-inline:9px}.logo strong,nav button:not(.active){font-size:0}.logo{justify-content:center;padding-inline:0}.logo span{font-size:25px}nav button{justify-content:center;padding:11px}nav button span{font-size:17px}.save-state{font-size:0;justify-content:center}.field-grid{grid-template-columns:1fr}.status-hero{grid-template-columns:auto 1fr}.live-values{grid-column:1/-1;padding-left:69px}.select-row{align-items:stretch;flex-direction:column;gap:12px}.select-row select{width:100%}}
   @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>
