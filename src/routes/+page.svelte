@@ -1,7 +1,5 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
   const emptyState = {
@@ -27,7 +25,6 @@
   let pendingAutomatic = null;
   let persisting = $state(false);
   let requestVersion = 0;
-  let panelHeight = 0;
 
   onMount(() => {
     const onKey = (event) => event.key === "Escape" && invoke("hide_quick_panel");
@@ -201,18 +198,6 @@
     await invoke("open_settings_window");
   }
 
-  async function resizePanel(height) {
-    if (height === panelHeight) return;
-    panelHeight = height;
-    try {
-      const panelWindow = getCurrentWindow();
-      const [oldSize, oldPosition] = await Promise.all([panelWindow.outerSize(), panelWindow.outerPosition()]);
-      await panelWindow.setSize(new LogicalSize(352, height));
-      const newSize = await panelWindow.outerSize();
-      await panelWindow.setPosition(new PhysicalPosition(oldPosition.x, oldPosition.y + oldSize.height - newSize.height));
-    } catch { /* Browser previews do not expose the native Tauri window. */ }
-  }
-
   function titleCase(value) {
     return value ? value[0].toUpperCase() + value.slice(1) : "Lum";
   }
@@ -220,7 +205,6 @@
   let adjusted = $derived(state.hardware_offset_pct !== 0 || state.overlay_offset_pct !== 0 || state.temperature_offset_k !== 0);
   let persistTarget = $derived(state.intensity >= 0.5 ? "night" : "day");
   let temperaturePercent = $derived(((Number(temperature) - 1800) / 8200) * 100);
-  $effect(() => { resizePanel(adjusted || !state.automatic ? 350 : 320); });
   let statusLine = $derived(
     state.effects_off ? "Effects are off" :
     state.app_bypassed ? "Paused for this application" :
@@ -239,7 +223,7 @@
 
   <section class="hero" aria-live="polite">
     <div class="orb" class:night={state.intensity > 0.45}><span></span></div>
-    <div>
+    <div class="hero-copy">
       <h1>Lum</h1>
       <p>{statusLine}</p>
     </div>
@@ -260,22 +244,6 @@
     </label>
   </section>
 
-  {#if adjusted}
-    <section class="adjustment-state" aria-live="polite">
-      <div class="adjustment-note">
-        <span>Adjusted until {state.adjustment_expires_at ?? state.next_transition_time}</span>
-        <div class="adjustment-actions">
-          <button type="button" class="reset-button" onclick={resetSchedule} disabled={persisting}>Reset</button>
-          <button type="button" class="keep-button" aria-label={`Permanently save these values as the ${persistTarget} schedule preset`} title={`Permanently update the ${persistTarget} schedule preset`} onclick={keepAdjustment} disabled={persisting}>{persisting ? "Saving…" : "Save"}</button>
-        </div>
-      </div>
-    </section>
-  {:else if !state.automatic}
-    <section class="adjustment-state" aria-live="polite">
-      <button type="button" class="reset-wide" onclick={resetSchedule}>Return to schedule</button>
-    </section>
-  {/if}
-
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
   <footer class="bottom-bar">
@@ -283,6 +251,14 @@
       <div><strong>Automatic</strong><span>{state.automatic ? "Following sun schedule" : "Appearance held"}</span></div>
       <button type="button" class="switch" class:on={state.automatic} role="switch" aria-checked={state.automatic} aria-label="Follow sun schedule automatically" onclick={toggleAutomatic}><span></span></button>
     </section>
+    {#if adjusted}
+      <div class="bottom-actions">
+        <button type="button" class="reset-button" onclick={resetSchedule} disabled={persisting}>Reset</button>
+        <button type="button" class="keep-button" aria-label={`Permanently save these values as the ${persistTarget} schedule preset`} title={`Permanently update the ${persistTarget} schedule preset`} onclick={keepAdjustment} disabled={persisting}>{persisting ? "Saving…" : "Save"}</button>
+      </div>
+    {:else if !state.automatic}
+      <button type="button" class="resume-button" onclick={resetSchedule}>Resume</button>
+    {/if}
     <button class="icon-button" type="button" aria-label="Open settings" title="Settings" onclick={openSettings}>⚙</button>
   </footer>
 </main>
@@ -307,7 +283,8 @@
   .orb span{display:block;width:100%;height:100%;border-radius:50%;background:#272934;transform:translate(24px,-6px);transition:transform .35s ease}
   .orb:not(.night) span{transform:translate(38px,-9px)}
   h1{margin:0 0 2px;font-size:15px;line-height:1;letter-spacing:-.01em}
-  .hero p{margin:0;color:#9da3b1;font-size:10px;line-height:1.2}
+  .hero-copy{min-width:0;flex:1}
+  .hero p{overflow:hidden;margin:0;color:#9da3b1;font-size:10px;line-height:1.2;text-overflow:ellipsis;white-space:nowrap}
   .controls{display:grid;gap:10px;padding:7px 1px 6px}
   .controls label{display:grid;gap:4px}
   .label-row{display:flex;justify-content:space-between;align-items:baseline;padding:0 1px;color:#d7d9e0;font-size:11.5px}
@@ -320,16 +297,7 @@
   input[type="range"].overlay{--slider-color:#57c9c1}
   input[type="range"].warmth{--slider-color:#f1a65c}
   input:disabled{opacity:.42;cursor:default}
-  .adjustment-state{padding:2px 1px 5px}
-  .adjustment-note{display:flex;align-items:center;justify-content:space-between;min-height:23px;color:#9298a7;font-size:9.5px}
-  .adjustment-actions{display:flex;align-items:center;gap:5px}
-  .adjustment-note button{padding:4px 8px;border-radius:7px;font-size:9.5px;white-space:nowrap}
-  .reset-button{background:rgba(255,255,255,.055);color:#aab0bd}
-  .keep-button{background:rgba(121,168,255,.16);color:#b9d2ff}
-  .adjustment-note button:hover,.adjustment-note button:focus-visible{filter:brightness(1.22);outline:1px solid rgba(158,193,255,.45);outline-offset:1px}
-  .adjustment-note button:disabled{opacity:.55;cursor:default;filter:none}
-  .reset-wide{width:100%;padding:5px;border-radius:7px;background:rgba(121,168,255,.13);color:#b8d1ff;font-size:10px}
-  .bottom-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:auto;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)}
+  .bottom-bar{display:flex;align-items:center;gap:7px;margin-top:auto;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)}
   .mode-row{display:flex;align-items:center;gap:9px;min-width:0}
   .mode-row>div{display:grid;gap:0}
   .mode-row strong{font-size:10.5px;font-weight:650;line-height:1.15}
@@ -339,7 +307,14 @@
   .switch.on{background:#6f9ce8}
   .switch.on span{transform:translateX(14px);background:white}
   .switch:focus-visible{outline:2px solid #9ec1ff;outline-offset:3px}
+  .bottom-actions{display:flex;align-items:center;gap:4px}
+  .bottom-actions button,.resume-button{padding:5px 7px;border-radius:7px;font-size:9px;white-space:nowrap}
+  .reset-button{background:rgba(255,255,255,.055);color:#aab0bd}
+  .keep-button,.resume-button{background:rgba(121,168,255,.16);color:#b9d2ff}
+  .bottom-actions button:hover,.bottom-actions button:focus-visible,.resume-button:hover,.resume-button:focus-visible{filter:brightness(1.22);outline:1px solid rgba(158,193,255,.45);outline-offset:1px}
+  .bottom-actions button:disabled{opacity:.55;cursor:default;filter:none}
   .icon-button{display:grid;place-items:center;width:46px;height:42px;flex:0 0 auto;border:1px solid rgba(121,168,255,.3);border-radius:11px;background:rgba(121,168,255,.14);color:#e9f0ff;font-size:25px;line-height:1;box-shadow:inset 0 1px rgba(255,255,255,.08)}
+  .bottom-bar>.icon-button{margin-left:auto}
   .icon-button:hover, .icon-button:focus-visible { border-color: rgba(121,168,255,.5); background: rgba(121,168,255,.2); color: #fff; outline: none; }
   .error{position:absolute;z-index:3;left:14px;right:14px;bottom:62px;margin:0;padding:7px 9px;border:1px solid rgba(255,120,112,.24);border-radius:8px;background:rgba(49,27,31,.96);color:#ffaaa3;font-size:10px;line-height:1.25;box-shadow:0 5px 15px rgba(0,0,0,.35)}
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
