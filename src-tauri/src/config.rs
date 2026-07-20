@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+#[cfg(windows)]
+use windows::Win32::{
+    Globalization::GetUserDefaultLocaleName,
+    System::Time::{GetDynamicTimeZoneInformation, DYNAMIC_TIME_ZONE_INFORMATION},
+};
+
 /// Top-level settings schema. Persisted as JSON in %AppData%\Lum\settings.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -72,6 +78,112 @@ pub struct BrightnessConfig {
     pub overlay_night_percent: u8,
 }
 
+impl Default for Location {
+    fn default() -> Self {
+        detect_location().unwrap_or(Self {
+            // Neutral fallback when the operating-system region cannot be read.
+            latitude: 0.0,
+            longitude: 0.0,
+            timezone: None,
+        })
+    }
+}
+
+#[cfg(windows)]
+fn detect_location() -> Option<Location> {
+    const LOCALE_NAME_CAPACITY: usize = 85;
+    let mut timezone = DYNAMIC_TIME_ZONE_INFORMATION::default();
+    // The return value describes DST state; the structure is populated for all
+    // successful states, including TIME_ZONE_ID_UNKNOWN.
+    unsafe { GetDynamicTimeZoneInformation(&mut timezone) };
+    let timezone = utf16_array(&timezone.TimeZoneKeyName);
+
+    let mut locale = [0u16; LOCALE_NAME_CAPACITY];
+    let locale_len = unsafe { GetUserDefaultLocaleName(&mut locale) };
+    let locale = (locale_len > 0).then(|| utf16_array(&locale))?;
+
+    guess_location(&timezone, &locale)
+}
+
+#[cfg(not(windows))]
+fn detect_location() -> Option<Location> {
+    None
+}
+
+#[cfg(windows)]
+fn utf16_array(value: &[u16]) -> String {
+    let end = value
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(value.len());
+    String::from_utf16_lossy(&value[..end])
+}
+
+/// Pick a representative city for solar calculations. Windows time-zone names
+/// are used first; locale region handles zones shared by several countries.
+fn guess_location(timezone: &str, locale: &str) -> Option<Location> {
+    let region = locale
+        .rsplit(['-', '_'])
+        .next()
+        .unwrap_or(locale)
+        .to_ascii_uppercase();
+    let coordinates = match (timezone, region.as_str()) {
+        ("GMT Standard Time", "IE") => (53.3498, -6.2603),
+        ("GMT Standard Time", _) => (51.5074, -0.1278),
+        ("W. Europe Standard Time", "NL") => (52.3676, 4.9041),
+        ("W. Europe Standard Time", "BE") => (50.8503, 4.3517),
+        ("W. Europe Standard Time", "CH") => (46.9480, 7.4474),
+        ("W. Europe Standard Time", "AT") => (48.2082, 16.3738),
+        ("W. Europe Standard Time", _) => (52.5200, 13.4050),
+        ("Romance Standard Time", "ES") => (40.4168, -3.7038),
+        ("Romance Standard Time", _) => (48.8566, 2.3522),
+        ("Central Europe Standard Time", "CZ") => (50.0755, 14.4378),
+        ("Central Europe Standard Time", "HU") => (47.4979, 19.0402),
+        ("Central Europe Standard Time", "SK") => (48.1486, 17.1077),
+        ("Central Europe Standard Time", _) => (52.2297, 21.0122),
+        ("E. Europe Standard Time", "FI") => (60.1699, 24.9384),
+        ("E. Europe Standard Time", _) => (47.0105, 28.8638),
+        ("FLE Standard Time", "EE") => (59.4370, 24.7536),
+        ("FLE Standard Time", "LV") => (56.9496, 24.1052),
+        ("FLE Standard Time", "LT") => (54.6872, 25.2797),
+        ("FLE Standard Time", _) => (50.4501, 30.5234),
+        ("Eastern Standard Time", "CA") => (43.6532, -79.3832),
+        ("Eastern Standard Time", _) => (40.7128, -74.0060),
+        ("Central Standard Time", "CA") => (49.8951, -97.1384),
+        ("Central Standard Time", _) => (41.8781, -87.6298),
+        ("Mountain Standard Time", "CA") => (51.0447, -114.0719),
+        ("Mountain Standard Time", _) => (39.7392, -104.9903),
+        ("Pacific Standard Time", "CA") => (49.2827, -123.1207),
+        ("Pacific Standard Time", _) => (34.0522, -118.2437),
+        ("Tokyo Standard Time", _) => (35.6762, 139.6503),
+        ("Korea Standard Time", _) => (37.5665, 126.9780),
+        ("China Standard Time", _) => (31.2304, 121.4737),
+        ("India Standard Time", _) => (28.6139, 77.2090),
+        ("AUS Eastern Standard Time", _) => (-33.8688, 151.2093),
+        ("E. Australia Standard Time", _) => (-27.4698, 153.0251),
+        ("New Zealand Standard Time", _) => (-41.2866, 174.7756),
+        _ => match region.as_str() {
+            "DE" => (52.5200, 13.4050),
+            "FR" => (48.8566, 2.3522),
+            "GB" => (51.5074, -0.1278),
+            "US" => (39.8283, -98.5795),
+            "CA" => (45.4215, -75.6972),
+            "AU" => (-35.2809, 149.1300),
+            "JP" => (35.6762, 139.6503),
+            "IN" => (28.6139, 77.2090),
+            "BR" => (-15.7939, -47.8828),
+            "MX" => (19.4326, -99.1332),
+            _ => return None,
+        },
+    };
+
+    Some(Location {
+        latitude: coordinates.0,
+        longitude: coordinates.1,
+        timezone: None,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeConfig {
     pub auto_switch: bool,
@@ -139,12 +251,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: 3,
-            location: Location {
-                // Default: New York City
-                latitude: 40.7128,
-                longitude: -74.0060,
-                timezone: None,
-            },
+            location: Location::default(),
             fade: FadeConfig {
                 evening_offset_min: 0,
                 morning_offset_min: 0,
@@ -166,13 +273,32 @@ impl Default for Settings {
                 dark_offset_min: 0,
                 light_offset_min: 0,
             },
-            pause_apps: vec![
-                "photoshop.exe".to_string(),
-                "lightroom.exe".to_string(),
-            ],
+            pause_apps: vec!["photoshop.exe".to_string(), "lightroom.exe".to_string()],
             hotkeys: HotkeyConfig::default(),
             developer: DeveloperConfig::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::guess_location;
+
+    #[test]
+    fn locale_disambiguates_shared_timezone() {
+        let berlin = guess_location("W. Europe Standard Time", "de-DE").unwrap();
+        let vienna = guess_location("W. Europe Standard Time", "de-AT").unwrap();
+        assert_eq!((berlin.latitude, berlin.longitude), (52.5200, 13.4050));
+        assert_eq!((vienna.latitude, vienna.longitude), (48.2082, 16.3738));
+    }
+
+    #[test]
+    fn locale_is_used_when_timezone_is_unknown() {
+        let location = guess_location("Unknown zone", "pt-BR").unwrap();
+        assert_eq!(
+            (location.latitude, location.longitude),
+            (-15.7939, -47.8828)
+        );
     }
 }
 
@@ -187,15 +313,13 @@ impl Settings {
     pub fn load() -> Self {
         let path = Self::config_path();
         match fs::read_to_string(&path) {
-            Ok(json) => {
-                match serde_json::from_str::<Settings>(&json) {
-                    Ok(settings) => settings,
-                    Err(e) => {
-                        eprintln!("[lum] Failed to parse settings: {e}. Using defaults.");
-                        Self::default()
-                    }
+            Ok(json) => match serde_json::from_str::<Settings>(&json) {
+                Ok(settings) => settings,
+                Err(e) => {
+                    eprintln!("[lum] Failed to parse settings: {e}. Using defaults.");
+                    Self::default()
                 }
-            }
+            },
             Err(_) => {
                 // First run — no settings file yet
                 let defaults = Self::default();
