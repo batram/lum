@@ -24,6 +24,8 @@
   let pendingAdjustment = null;
   let pendingAutomatic = null;
   let persisting = $state(false);
+  let resetSettling = $state(false);
+  let resetZeroReads = 0;
   let requestVersion = 0;
   let automaticRequestVersion = 0;
   let syncRevision = 0;
@@ -62,6 +64,11 @@
         } : {}),
         ...(pendingAutomatic ? { automatic: pendingAutomatic.value } : {}),
       };
+      if (resetSettling) {
+        const offsetsAreClear = next.hardware_offset_pct === 0 && next.overlay_offset_pct === 0 && next.temperature_offset_k === 0;
+        resetZeroReads = offsetsAreClear ? resetZeroReads + 1 : 0;
+        if (resetZeroReads >= 2) resetSettling = false;
+      }
       if (!loaded || (!interacting && !pendingAdjustment)) {
         hardwareBrightness = next.hardware_brightness_pct;
         overlayBrightness = next.overlay_brightness_pct;
@@ -76,6 +83,8 @@
   }
 
   function queueAdjustment() {
+    resetSettling = false;
+    resetZeroReads = 0;
     const desiredHardware = Number(hardwareBrightness);
     const desiredOverlay = Number(overlayBrightness);
     const desiredTemperature = Number(temperature);
@@ -151,6 +160,8 @@
     const adjustmentVersion = ++requestVersion;
     const automaticVersion = ++automaticRequestVersion;
     syncRevision += 1;
+    resetSettling = true;
+    resetZeroReads = 0;
     adjustmentTimer = null;
     pendingAdjustment = {
       hardware: state.scheduled_hardware_brightness_pct,
@@ -173,6 +184,8 @@
       await refresh();
     } catch (reason) {
       syncRevision += 1;
+      resetSettling = false;
+      resetZeroReads = 0;
       if (adjustmentVersion === requestVersion) pendingAdjustment = null;
       if (automaticVersion === automaticRequestVersion) pendingAutomatic = null;
       error = `Could not return to the schedule: ${reason}`;
@@ -204,6 +217,8 @@
         settings.color.day_temp_k = colorTemperature;
       }
       await invoke("save_settings", { settings });
+      resetSettling = true;
+      resetZeroReads = 0;
       await invoke("reset_temporary_adjustments");
       syncRevision += 1;
       if (version === requestVersion) pendingAdjustment = null;
@@ -211,6 +226,8 @@
       await refresh();
     } catch (reason) {
       syncRevision += 1;
+      resetSettling = false;
+      resetZeroReads = 0;
       error = `Could not keep ${target} settings: ${reason}`;
       queueAdjustment();
     } finally {
@@ -226,7 +243,7 @@
     return value ? value[0].toUpperCase() + value.slice(1) : "Lum";
   }
 
-  let adjusted = $derived(state.hardware_offset_pct !== 0 || state.overlay_offset_pct !== 0 || state.temperature_offset_k !== 0);
+  let adjusted = $derived(!resetSettling && (state.hardware_offset_pct !== 0 || state.overlay_offset_pct !== 0 || state.temperature_offset_k !== 0));
   let persistTarget = $derived(state.intensity >= 0.5 ? "night" : "day");
   let temperaturePercent = $derived(((Number(temperature) - 1800) / 8200) * 100);
   let statusLine = $derived(
