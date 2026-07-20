@@ -276,12 +276,16 @@
       <button type="button" class="switch" class:on={state.automatic} role="switch" aria-checked={state.automatic} aria-label="Follow sun schedule automatically" onclick={toggleAutomatic}><span></span></button>
     </section>
     {#if adjusted}
-      <div class="bottom-actions">
+      <span class="footer-divider" aria-hidden="true"></span>
+      <div class="bottom-actions changes">
         <button type="button" class="reset-button" onclick={resetSchedule} disabled={persisting}>Reset</button>
         <button type="button" class="keep-button" aria-label={`Permanently save these values as the ${persistTarget} schedule preset`} title={`Permanently update the ${persistTarget} schedule preset`} onclick={keepAdjustment} disabled={persisting}>{persisting ? "Saving…" : "Save"}</button>
       </div>
+      <span class="footer-divider" aria-hidden="true"></span>
     {:else if !state.automatic}
-      <button type="button" class="resume-button" onclick={resetSchedule}>Resume</button>
+      <span class="footer-divider" aria-hidden="true"></span>
+      <div class="bottom-actions"><button type="button" class="resume-button" onclick={resetSchedule}>Resume</button></div>
+      <span class="footer-divider" aria-hidden="true"></span>
     {/if}
     <button class="icon-button" type="button" aria-label="Open settings" title="Settings" onclick={openSettings}>⚙</button>
   </footer>
@@ -322,7 +326,7 @@
   input[type="range"].warmth{--slider-color:#f1a65c}
   input:disabled{opacity:.42;cursor:default}
   .bottom-bar{display:flex;align-items:center;gap:7px;margin-top:auto;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)}
-  .mode-row{display:flex;align-items:center;gap:9px;min-width:0}
+  .mode-row{display:flex;align-items:center;gap:9px;min-width:0;flex:0 0 auto}
   .mode-row>div{display:grid;gap:0}
   .mode-row strong{font-size:10.5px;font-weight:650;line-height:1.15}
   .mode-row div span{color:#858b9a;font-size:8.5px;line-height:1.15}
@@ -331,7 +335,9 @@
   .switch.on{background:#6f9ce8}
   .switch.on span{transform:translateX(14px);background:white}
   .switch:focus-visible{outline:2px solid #9ec1ff;outline-offset:3px}
-  .bottom-actions{display:flex;align-items:center;gap:4px}
+  .footer-divider{width:1px;height:24px;flex:0 0 auto;border-radius:1px;background:rgba(255,255,255,.13)}
+  .bottom-actions{position:relative;display:flex;align-items:center;justify-content:center;gap:4px;min-width:72px;flex:1}
+  .bottom-actions.changes::before{content:"";position:absolute;top:-6px;left:50%;width:34px;height:2px;border-radius:2px;background:linear-gradient(90deg,#79a8ff 0 33%,#57c9c1 33% 66%,#f1a65c 66% 100%);opacity:.72;transform:translateX(-50%)}
   .bottom-actions button,.resume-button{padding:5px 7px;border-radius:7px;font-size:9px;white-space:nowrap}
   .reset-button{background:rgba(255,255,255,.055);color:#aab0bd}
   .keep-button,.resume-button{background:rgba(121,168,255,.16);color:#b9d2ff}
