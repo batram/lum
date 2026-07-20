@@ -336,9 +336,9 @@
   output{color:#fff;font-size:11.5px;font-weight:650;font-variant-numeric:tabular-nums}
   input[type="range"]{--slider-color:#79a8ff;width:100%;height:36px;margin:-7px 0;appearance:none;background:transparent;cursor:pointer}
   input[type="range"]::-webkit-slider-runnable-track{height:5px;border-radius:5px;background:linear-gradient(90deg,color-mix(in srgb,var(--slider-color) 88%,white) 0 var(--value),rgba(255,255,255,.22) var(--value) 100%);box-shadow:inset 0 1px 2px rgba(0,0,0,.32)}
-  input[type="range"]::-webkit-slider-thumb{width:24px;height:36px;margin-top:-15.5px;appearance:none;border:5px solid transparent;border-radius:12px;background:var(--slider-color);background-clip:content-box;filter:drop-shadow(0 0 1px #dce7fb) drop-shadow(0 2px 3px rgba(0,0,0,.5))}
+  input[type="range"]::-webkit-slider-thumb{width:24px;height:36px;margin-top:-15.5px;padding:1px;appearance:none;border:5px solid transparent;border-radius:12px;background:linear-gradient(var(--slider-color),var(--slider-color)) content-box,linear-gradient(#eef4ff,#d7e2f4) padding-box;background-clip:content-box,padding-box;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))}
   input[type="range"]:focus-visible{outline:none}
-  input[type="range"]:focus-visible::-webkit-slider-thumb{filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 4px rgba(158,193,255,.9)) drop-shadow(0 2px 3px rgba(0,0,0,.5))}
+  input[type="range"]:focus-visible::-webkit-slider-thumb{filter:drop-shadow(0 0 4px rgba(158,193,255,.95)) drop-shadow(0 2px 3px rgba(0,0,0,.5))}
   input[type="range"].overlay{--slider-color:#57c9c1}
   input[type="range"].warmth{--slider-color:#f1a65c}
   input:disabled{opacity:.42;cursor:default}
