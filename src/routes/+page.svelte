@@ -244,19 +244,21 @@
     </label>
   </section>
 
-  <section class="adjustment-state" aria-live="polite">
-    {#if adjusted}
+  {#if adjusted}
+    <section class="adjustment-state" aria-live="polite">
       <div class="adjustment-note">
         <span>Adjusted until {state.adjustment_expires_at ?? state.next_transition_time}</span>
         <div class="adjustment-actions">
           <button type="button" class="reset-button" onclick={resetSchedule} disabled={persisting}>Reset</button>
-          <button type="button" class="keep-button" onclick={keepAdjustment} disabled={persisting}>{persisting ? "Saving…" : `Keep for ${persistTarget}`}</button>
+          <button type="button" class="keep-button" aria-label={`Permanently save these values as the ${persistTarget} schedule preset`} title={`Permanently update the ${persistTarget} schedule preset`} onclick={keepAdjustment} disabled={persisting}>{persisting ? "Saving…" : `Save as ${persistTarget} preset`}</button>
         </div>
       </div>
-    {:else if !state.automatic}
+    </section>
+  {:else if !state.automatic}
+    <section class="adjustment-state" aria-live="polite">
       <button type="button" class="reset-wide" onclick={resetSchedule}>Return to schedule</button>
-    {/if}
-  </section>
+    </section>
+  {/if}
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
@@ -290,8 +292,8 @@
   .orb:not(.night) span{transform:translate(38px,-9px)}
   h1{margin:0 0 2px;font-size:15px;line-height:1;letter-spacing:-.01em}
   .hero p{margin:0;color:#9da3b1;font-size:10px;line-height:1.2}
-  .controls{display:grid;gap:10px;padding:6px 1px 5px}
-  .controls label{display:grid;gap:3px}
+  .controls{display:grid;flex:1;grid-template-rows:repeat(3,1fr);gap:8px;padding:7px 1px 6px}
+  .controls label{display:grid;align-content:center;gap:4px}
   .label-row{display:flex;justify-content:space-between;align-items:baseline;padding:0 1px;color:#d7d9e0;font-size:11.5px}
   output{color:#fff;font-size:11.5px;font-weight:650;font-variant-numeric:tabular-nums}
   input[type="range"]{--slider-color:#79a8ff;width:100%;height:22px;margin:0;appearance:none;background:transparent;cursor:pointer}
@@ -302,7 +304,7 @@
   input[type="range"].overlay{--slider-color:#57c9c1}
   input[type="range"].warmth{--slider-color:#f1a65c}
   input:disabled{opacity:.42;cursor:default}
-  .adjustment-state{min-height:27px;padding:2px 1px 4px}
+  .adjustment-state{padding:2px 1px 5px}
   .adjustment-note{display:flex;align-items:center;justify-content:space-between;min-height:23px;color:#9298a7;font-size:9.5px}
   .adjustment-actions{display:flex;align-items:center;gap:5px}
   .adjustment-note button{padding:4px 8px;border-radius:7px;font-size:9.5px;white-space:nowrap}
