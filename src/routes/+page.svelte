@@ -25,6 +25,8 @@
   let pendingAutomatic = null;
   let persisting = $state(false);
   let requestVersion = 0;
+  let automaticRequestVersion = 0;
+  let syncRevision = 0;
 
   onMount(() => {
     const onKey = (event) => event.key === "Escape" && invoke("hide_quick_panel");
@@ -44,17 +46,10 @@
   });
 
   async function refresh() {
+    const revision = syncRevision;
     try {
       const next = await invoke("get_app_state");
-      const confirmed = pendingAdjustment &&
-        Math.abs(next.hardware_brightness_pct - pendingAdjustment.hardware) <= 1 &&
-        Math.abs(next.overlay_brightness_pct - pendingAdjustment.overlay) <= 1 &&
-        Math.abs(next.color_temp_k - pendingAdjustment.temperature) <= 150;
-      const expired = pendingAdjustment && Date.now() > pendingAdjustment.expires;
-      if (confirmed || expired) pendingAdjustment = null;
-      if (pendingAutomatic && (next.automatic === pendingAutomatic.value || Date.now() > pendingAutomatic.expires)) {
-        pendingAutomatic = null;
-      }
+      if (revision !== syncRevision) return;
       state = {
         ...next,
         ...(pendingAdjustment ? {
@@ -75,6 +70,7 @@
       loaded = true;
       error = "";
     } catch (reason) {
+      if (revision !== syncRevision) return;
       error = `Lum could not read the display state: ${reason}`;
     }
   }
@@ -90,8 +86,8 @@
       hardware: desiredHardware,
       overlay: desiredOverlay,
       temperature: desiredTemperature,
-      expires: Date.now() + 4000,
     };
+    syncRevision += 1;
     state = {
       ...state,
       automatic: true,
@@ -109,8 +105,14 @@
           hardwareOffsetPct: hardwareOffset,
           overlayOffsetPct: overlayOffset,
           temperatureOffsetK: temperatureOffset,
+        }).then(() => {
+          if (version !== requestVersion) return;
+          syncRevision += 1;
+          pendingAdjustment = null;
+          refresh();
         }).catch((reason) => {
           if (version !== requestVersion) return;
+          syncRevision += 1;
           pendingAdjustment = null;
           error = `Adjustment failed: ${reason}`;
           refresh();
@@ -121,42 +123,61 @@
     }, 120);
   }
 
-  function toggleAutomatic() {
+  async function toggleAutomatic() {
     const previous = state.automatic;
     const automatic = !previous;
-    pendingAutomatic = { value: automatic, expires: Date.now() + 4000 };
+    const version = ++automaticRequestVersion;
+    syncRevision += 1;
+    pendingAutomatic = { value: automatic };
     state = { ...state, automatic };
-    invoke("set_automatic", { automatic }).catch((reason) => {
+    try {
+      await invoke("set_automatic", { automatic });
+      if (version !== automaticRequestVersion) return;
+      syncRevision += 1;
+      pendingAutomatic = null;
+      await refresh();
+    } catch (reason) {
+      if (version !== automaticRequestVersion) return;
+      syncRevision += 1;
       pendingAutomatic = null;
       state = { ...state, automatic: previous };
       error = `Could not change automatic mode: ${reason}`;
-    });
+      refresh();
+    }
   }
 
-  function resetSchedule() {
+  async function resetSchedule() {
     clearTimeout(adjustmentTimer);
-    requestVersion += 1;
+    const adjustmentVersion = ++requestVersion;
+    const automaticVersion = ++automaticRequestVersion;
+    syncRevision += 1;
     adjustmentTimer = null;
     pendingAdjustment = {
       hardware: state.scheduled_hardware_brightness_pct,
       overlay: state.scheduled_overlay_brightness_pct,
       temperature: state.scheduled_color_temp_k,
-      expires: Date.now() + 4000,
     };
-    pendingAutomatic = { value: true, expires: Date.now() + 4000 };
+    pendingAutomatic = { value: true };
     hardwareBrightness = state.scheduled_hardware_brightness_pct;
     overlayBrightness = state.scheduled_overlay_brightness_pct;
     temperature = state.scheduled_color_temp_k;
     state = { ...state, automatic: true, hardware_offset_pct: 0, overlay_offset_pct: 0, temperature_offset_k: 0 };
-    Promise.all([
-      invoke("reset_temporary_adjustments"),
-      invoke("set_automatic", { automatic: true }),
-    ]).catch((reason) => {
-      pendingAdjustment = null;
-      pendingAutomatic = null;
+    try {
+      await Promise.all([
+        invoke("reset_temporary_adjustments"),
+        invoke("set_automatic", { automatic: true }),
+      ]);
+      syncRevision += 1;
+      if (adjustmentVersion === requestVersion) pendingAdjustment = null;
+      if (automaticVersion === automaticRequestVersion) pendingAutomatic = null;
+      await refresh();
+    } catch (reason) {
+      syncRevision += 1;
+      if (adjustmentVersion === requestVersion) pendingAdjustment = null;
+      if (automaticVersion === automaticRequestVersion) pendingAutomatic = null;
       error = `Could not return to the schedule: ${reason}`;
       refresh();
-    });
+    }
   }
 
   async function keepAdjustment() {
@@ -165,7 +186,8 @@
     error = "";
     clearTimeout(adjustmentTimer);
     adjustmentTimer = null;
-    requestVersion += 1;
+    const version = ++requestVersion;
+    syncRevision += 1;
     const target = persistTarget;
     try {
       const settings = await invoke("get_settings");
@@ -183,10 +205,12 @@
       }
       await invoke("save_settings", { settings });
       await invoke("reset_temporary_adjustments");
-      pendingAdjustment = null;
+      syncRevision += 1;
+      if (version === requestVersion) pendingAdjustment = null;
       state = { ...state, hardware_offset_pct: 0, overlay_offset_pct: 0, temperature_offset_k: 0, adjustment_expires_at: null };
       await refresh();
     } catch (reason) {
+      syncRevision += 1;
       error = `Could not keep ${target} settings: ${reason}`;
       queueAdjustment();
     } finally {
@@ -232,15 +256,15 @@
   <section class="controls" aria-label="Temporary display adjustments">
     <label>
       <span class="label-row"><span>Monitor</span><output>{hardwareBrightness}%</output></span>
-      <input style={`--value:${hardwareBrightness}%`} aria-label="Temporary monitor brightness" type="range" min="0" max="100" step="1" bind:value={hardwareBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+      <input style={`--value:${hardwareBrightness}%`} aria-label="Temporary monitor brightness" type="range" min="0" max="100" step="1" bind:value={hardwareBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off || persisting} />
     </label>
     <label>
       <span class="label-row"><span>Gamma</span><output>{overlayBrightness}%</output></span>
-      <input style={`--value:${overlayBrightness}%`} class="overlay" aria-label="Temporary gamma brightness" type="range" min="5" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+      <input style={`--value:${overlayBrightness}%`} class="overlay" aria-label="Temporary gamma brightness" type="range" min="5" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off || persisting} />
     </label>
     <label>
       <span class="label-row"><span>Warmth</span><output>{temperature}K</output></span>
-      <input style={`--value:${temperaturePercent}%`} class="warmth" aria-label="Temporary color temperature" type="range" min="1800" max="10000" step="100" bind:value={temperature} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off} />
+      <input style={`--value:${temperaturePercent}%`} class="warmth" aria-label="Temporary color temperature" type="range" min="1800" max="10000" step="100" bind:value={temperature} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off || persisting} />
     </label>
   </section>
 
