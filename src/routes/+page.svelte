@@ -1,5 +1,7 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
   const emptyState = {
@@ -25,6 +27,7 @@
   let pendingAutomatic = null;
   let persisting = $state(false);
   let requestVersion = 0;
+  let panelHeight = 0;
 
   onMount(() => {
     const onKey = (event) => event.key === "Escape" && invoke("hide_quick_panel");
@@ -198,6 +201,18 @@
     await invoke("open_settings_window");
   }
 
+  async function resizePanel(height) {
+    if (height === panelHeight) return;
+    panelHeight = height;
+    try {
+      const panelWindow = getCurrentWindow();
+      const [oldSize, oldPosition] = await Promise.all([panelWindow.outerSize(), panelWindow.outerPosition()]);
+      await panelWindow.setSize(new LogicalSize(352, height));
+      const newSize = await panelWindow.outerSize();
+      await panelWindow.setPosition(new PhysicalPosition(oldPosition.x, oldPosition.y + oldSize.height - newSize.height));
+    } catch { /* Browser previews do not expose the native Tauri window. */ }
+  }
+
   function titleCase(value) {
     return value ? value[0].toUpperCase() + value.slice(1) : "Lum";
   }
@@ -205,6 +220,7 @@
   let adjusted = $derived(state.hardware_offset_pct !== 0 || state.overlay_offset_pct !== 0 || state.temperature_offset_k !== 0);
   let persistTarget = $derived(state.intensity >= 0.5 ? "night" : "day");
   let temperaturePercent = $derived(((Number(temperature) - 1800) / 8200) * 100);
+  $effect(() => { resizePanel(adjusted || !state.automatic ? 350 : 320); });
   let statusLine = $derived(
     state.effects_off ? "Effects are off" :
     state.app_bypassed ? "Paused for this application" :
@@ -250,7 +266,7 @@
         <span>Adjusted until {state.adjustment_expires_at ?? state.next_transition_time}</span>
         <div class="adjustment-actions">
           <button type="button" class="reset-button" onclick={resetSchedule} disabled={persisting}>Reset</button>
-          <button type="button" class="keep-button" aria-label={`Permanently save these values as the ${persistTarget} schedule preset`} title={`Permanently update the ${persistTarget} schedule preset`} onclick={keepAdjustment} disabled={persisting}>{persisting ? "Saving…" : `Save as ${persistTarget} preset`}</button>
+          <button type="button" class="keep-button" aria-label={`Permanently save these values as the ${persistTarget} schedule preset`} title={`Permanently update the ${persistTarget} schedule preset`} onclick={keepAdjustment} disabled={persisting}>{persisting ? "Saving…" : "Save"}</button>
         </div>
       </div>
     </section>
@@ -292,8 +308,8 @@
   .orb:not(.night) span{transform:translate(38px,-9px)}
   h1{margin:0 0 2px;font-size:15px;line-height:1;letter-spacing:-.01em}
   .hero p{margin:0;color:#9da3b1;font-size:10px;line-height:1.2}
-  .controls{display:grid;flex:1;grid-template-rows:repeat(3,1fr);gap:8px;padding:7px 1px 6px}
-  .controls label{display:grid;align-content:center;gap:4px}
+  .controls{display:grid;gap:10px;padding:7px 1px 6px}
+  .controls label{display:grid;gap:4px}
   .label-row{display:flex;justify-content:space-between;align-items:baseline;padding:0 1px;color:#d7d9e0;font-size:11.5px}
   output{color:#fff;font-size:11.5px;font-weight:650;font-variant-numeric:tabular-nums}
   input[type="range"]{--slider-color:#79a8ff;width:100%;height:22px;margin:0;appearance:none;background:transparent;cursor:pointer}
