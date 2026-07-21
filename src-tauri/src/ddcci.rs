@@ -45,8 +45,6 @@ extern "system" {
         pdwMaximumContrast: *mut u32,
     ) -> i32;
 
-    fn SetMonitorContrast(hMonitor: *mut c_void, dwNewContrast: u32) -> i32;
-
     fn DestroyPhysicalMonitors(
         dwPhysicalMonitorArraySize: u32,
         pPhysicalMonitorArray: *mut PhysicalMonitor,
@@ -75,8 +73,18 @@ impl MonitorInfoExW {
     fn new() -> Self {
         Self {
             cb_size: std::mem::size_of::<Self>() as u32,
-            monitor: RECT { left: 0, top: 0, right: 0, bottom: 0 },
-            work: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            monitor: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            work: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
             flags: 0,
             device: [0; 32],
         }
@@ -135,13 +143,13 @@ pub fn enumerate_monitors(active_display_names: &[String]) -> Vec<MonitorInfo> {
 
     // Collect HMONITOR handles
     unsafe extern "system" fn enum_proc(
-        hMonitor: *mut c_void,
+        h_monitor: *mut c_void,
         _hdc: *mut c_void,
         _rect: *mut RECT,
         data: isize,
     ) -> i32 {
         let monitors = &mut *(data as *mut Vec<*mut c_void>);
-        monitors.push(hMonitor);
+        monitors.push(h_monitor);
         1 // Continue enumeration
     }
 
@@ -161,7 +169,11 @@ pub fn enumerate_monitors(active_display_names: &[String]) -> Vec<MonitorInfo> {
     for hmon in &hmonitors {
         let mut logical_info = MonitorInfoExW::new();
         let device_name = if unsafe { GetMonitorInfoW(*hmon, &mut logical_info) } != 0 {
-            let len = logical_info.device.iter().position(|&c| c == 0).unwrap_or(32);
+            let len = logical_info
+                .device
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(32);
             String::from_utf16_lossy(&logical_info.device[..len])
         } else {
             String::new()
@@ -180,9 +192,8 @@ pub fn enumerate_monitors(active_display_names: &[String]) -> Vec<MonitorInfo> {
             });
         }
 
-        let ok = unsafe {
-            GetPhysicalMonitorsFromHMONITOR(*hmon, count, phys_monitors.as_mut_ptr())
-        };
+        let ok =
+            unsafe { GetPhysicalMonitorsFromHMONITOR(*hmon, count, phys_monitors.as_mut_ptr()) };
         if ok == 0 {
             continue;
         }
