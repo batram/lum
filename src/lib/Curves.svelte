@@ -93,7 +93,16 @@
 
   function interpolate(day, night, minute) { return day + (night - day) * nightAmount(minute); }
   function hardwareAt(minute) { return interpolate(settings.brightness.hardware_day_percent, settings.brightness.hardware_night_percent, minute); }
-  function overlayAt(minute) { return interpolate(settings.brightness.overlay_day_percent, settings.brightness.overlay_night_percent, minute); }
+  let minimumGammaPercent = $derived(Math.max(1, Math.min(100, Number(settings.developer.minimum_gamma_percent) || 10)));
+  function gammaDisplayPercent(actual) {
+    if (minimumGammaPercent >= 100) return 0;
+    return Math.round(((Math.max(minimumGammaPercent, Math.min(100, actual)) - minimumGammaPercent) / (100 - minimumGammaPercent)) * 100);
+  }
+  function gammaActualPercent(display) {
+    if (minimumGammaPercent >= 100) return 100;
+    return Math.round(minimumGammaPercent + (Math.max(0, Math.min(100, display)) / 100) * (100 - minimumGammaPercent));
+  }
+  function overlayAt(minute) { return gammaDisplayPercent(interpolate(settings.brightness.overlay_day_percent, settings.brightness.overlay_night_percent, minute)); }
   function temperatureAt(minute) { return interpolate(settings.color.day_temp_k, settings.color.night_temp_k, minute); }
   function pathFor(getValue, getY) {
     let path = "";
@@ -165,8 +174,8 @@
     }
     if (kind === "hardware-day") settings.brightness.hardware_day_percent = percentForY(point.y, 0);
     if (kind === "hardware-night") settings.brightness.hardware_night_percent = percentForY(point.y, 0);
-    if (kind === "overlay-day") settings.brightness.overlay_day_percent = percentForY(point.y, 5);
-    if (kind === "overlay-night") settings.brightness.overlay_night_percent = percentForY(point.y, 5);
+    if (kind === "overlay-day") settings.brightness.overlay_day_percent = gammaActualPercent(percentForY(point.y, 0));
+    if (kind === "overlay-night") settings.brightness.overlay_night_percent = gammaActualPercent(percentForY(point.y, 0));
     if (kind === "temperature-day") settings.color.day_temp_k = kelvinForY(point.y);
     if (kind === "temperature-night") settings.color.night_temp_k = kelvinForY(point.y);
   }
@@ -204,8 +213,8 @@
     const kelvin = (value) => event.key === "Home" ? 1800 : event.key === "End" ? 10000 : Math.max(1800, Math.min(10000, value + direction * 100));
     if (kind === "hardware-day") settings.brightness.hardware_day_percent = percent(settings.brightness.hardware_day_percent, 0);
     if (kind === "hardware-night") settings.brightness.hardware_night_percent = percent(settings.brightness.hardware_night_percent, 0);
-    if (kind === "overlay-day") settings.brightness.overlay_day_percent = percent(settings.brightness.overlay_day_percent, 5);
-    if (kind === "overlay-night") settings.brightness.overlay_night_percent = percent(settings.brightness.overlay_night_percent, 5);
+    if (kind === "overlay-day") settings.brightness.overlay_day_percent = gammaActualPercent(percent(gammaDisplayPercent(settings.brightness.overlay_day_percent), 0));
+    if (kind === "overlay-night") settings.brightness.overlay_night_percent = gammaActualPercent(percent(gammaDisplayPercent(settings.brightness.overlay_night_percent), 0));
     if (kind === "temperature-day") settings.color.day_temp_k = kelvin(settings.color.day_temp_k);
     if (kind === "temperature-night") settings.color.night_temp_k = kelvin(settings.color.night_temp_k);
   }
@@ -263,10 +272,10 @@
       {#each [
         ["hardware-night", "Hardware night brightness", nightHandleMinute, yForPercent(settings.brightness.hardware_night_percent), settings.brightness.hardware_night_percent, "hardware"],
         ["hardware-day", "Hardware day brightness", dayHandleMinute, yForPercent(settings.brightness.hardware_day_percent), settings.brightness.hardware_day_percent, "hardware"],
-        ["overlay-night", "Overlay night brightness", wrapMinute(nightHandleMinute + 18), yForPercent(settings.brightness.overlay_night_percent), settings.brightness.overlay_night_percent, "overlay"],
-        ["overlay-day", "Overlay day brightness", wrapMinute(dayHandleMinute + 18), yForPercent(settings.brightness.overlay_day_percent), settings.brightness.overlay_day_percent, "overlay"],
+        ["overlay-night", "Overlay night brightness", wrapMinute(nightHandleMinute + 18), yForPercent(gammaDisplayPercent(settings.brightness.overlay_night_percent)), gammaDisplayPercent(settings.brightness.overlay_night_percent), "overlay"],
+        ["overlay-day", "Overlay day brightness", wrapMinute(dayHandleMinute + 18), yForPercent(gammaDisplayPercent(settings.brightness.overlay_day_percent)), gammaDisplayPercent(settings.brightness.overlay_day_percent), "overlay"],
       ] as item}
-        <g class={`handle ${item[5]}`} role="slider" aria-label={item[1]} aria-valuemin={item[5] === "overlay" ? 5 : 0} aria-valuemax="100" aria-valuenow={item[4]} tabindex="0" onkeydown={(event) => handleValueKey(item[0], event)} onpointerdown={(event) => startDrag(item[0], event)}>
+        <g class={`handle ${item[5]}`} role="slider" aria-label={item[1]} aria-valuemin="0" aria-valuemax="100" aria-valuenow={item[4]} tabindex="0" onkeydown={(event) => handleValueKey(item[0], event)} onpointerdown={(event) => startDrag(item[0], event)}>
           <circle cx={xForMinute(item[2])} cy={item[3]} r="10" />
           {#if dragging?.kind === item[0]}<g class={`drag-value ${item[5]}`} transform={`translate(${xForMinute(item[2])} ${item[3]})`}><rect x="-23" y="-40" width="46" height="24" rx="7" /><text y="-24">{item[4]}%</text></g>{/if}
           <title>{item[1]}: {item[4]}%</title>

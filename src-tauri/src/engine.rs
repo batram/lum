@@ -61,6 +61,7 @@ pub struct EngineState {
     pub scheduled_color_temp_k: u32,
     pub scheduled_hardware_brightness_pct: u8,
     pub scheduled_overlay_brightness_pct: u8,
+    pub minimum_gamma_percent: u8,
     pub color_temp_k: u32,
     pub hardware_brightness_pct: u8,
     pub overlay_brightness_pct: u8,
@@ -87,6 +88,7 @@ impl Default for EngineState {
             scheduled_color_temp_k: 6500,
             scheduled_hardware_brightness_pct: 100,
             scheduled_overlay_brightness_pct: 100,
+            minimum_gamma_percent: 10,
             color_temp_k: 6500,
             hardware_brightness_pct: 100,
             overlay_brightness_pct: 100,
@@ -175,7 +177,7 @@ impl FadeEngine {
         let overlay = offset_percent(
             current.scheduled_overlay_brightness_pct,
             overlay_offset_pct,
-            5,
+            settings.developer.gamma_floor_percent(),
         );
         let temperature = (current.scheduled_color_temp_k as i32 + temperature_offset_k)
             .clamp(1800, 10000) as u32;
@@ -250,7 +252,11 @@ impl FadeEngine {
         let now = Local::now().naive_local();
         let scheduled = schedule_values(&settings, now);
         let controls = self.controls.lock().unwrap().clone();
-        let (hardware, overlay, temperature) = effective_values(&scheduled, &controls);
+        let (hardware, overlay, temperature) = effective_values(
+            &scheduled,
+            &controls,
+            settings.developer.gamma_floor_percent(),
+        );
         apply_values(temperature, hardware, overlay, &settings.disabled_displays);
         let mut state = self.state.lock().unwrap();
         state.preview_minute = None;
@@ -363,7 +369,11 @@ impl FadeEngine {
                     ddcci::set_all_brightness(settings.brightness.hardware_day_percent);
                     (settings.brightness.hardware_day_percent, 100, 6500)
                 } else {
-                    effective_values(&scheduled, &controls)
+                    effective_values(
+                        &scheduled,
+                        &controls,
+                        settings.developer.gamma_floor_percent(),
+                    )
                 };
                 if !controls.effects_off && !app_bypassed {
                     apply_values(
@@ -392,6 +402,7 @@ impl FadeEngine {
                 state.scheduled_color_temp_k = scheduled.temperature_k;
                 state.scheduled_hardware_brightness_pct = scheduled.hardware_pct;
                 state.scheduled_overlay_brightness_pct = scheduled.overlay_pct;
+                state.minimum_gamma_percent = settings.developer.gamma_floor_percent();
                 state.color_temp_k = temperature;
                 state.hardware_brightness_pct = hardware;
                 state.overlay_brightness_pct = overlay;
@@ -422,17 +433,25 @@ impl FadeEngine {
     }
 }
 
-fn effective_values(scheduled: &ScheduleValues, controls: &RuntimeControls) -> (u8, u8, u32) {
+fn effective_values(
+    scheduled: &ScheduleValues,
+    controls: &RuntimeControls,
+    minimum_gamma_percent: u8,
+) -> (u8, u8, u32) {
     if !controls.automatic {
         return (
             controls.held_hardware_pct,
-            controls.held_overlay_pct,
+            controls.held_overlay_pct.max(minimum_gamma_percent),
             controls.held_temperature_k,
         );
     }
     (
         offset_percent(scheduled.hardware_pct, controls.hardware_offset_pct, 0),
-        offset_percent(scheduled.overlay_pct, controls.overlay_offset_pct, 5),
+        offset_percent(
+            scheduled.overlay_pct,
+            controls.overlay_offset_pct,
+            minimum_gamma_percent,
+        ),
         (scheduled.temperature_k as i32 + controls.temperature_offset_k).clamp(1800, 10000) as u32,
     )
 }
@@ -471,7 +490,7 @@ fn schedule_values(settings: &Settings, now: NaiveDateTime) -> ScheduleValues {
             settings.brightness.overlay_day_percent,
             settings.brightness.overlay_night_percent,
             intensity,
-            5,
+            settings.developer.gamma_floor_percent(),
         ),
         temperature_k: lerp_kelvin(
             settings.color.day_temp_k,
@@ -580,8 +599,24 @@ mod tests {
     #[test]
     fn independent_percent_curves_use_their_own_floor() {
         assert_eq!(lerp_percent(100, 0, 1.0, 0), 0);
-        assert_eq!(lerp_percent(100, 0, 1.0, 5), 5);
+        assert_eq!(lerp_percent(100, 0, 1.0, 10), 10);
         assert_eq!(lerp_percent(100, 50, 0.5, 0), 75);
+    }
+
+    #[test]
+    fn manual_gamma_respects_configured_floor() {
+        let scheduled = ScheduleValues {
+            intensity: 0.0,
+            phase: "day".into(),
+            hardware_pct: 100,
+            overlay_pct: 100,
+            temperature_k: 6500,
+        };
+        let mut controls = RuntimeControls::default();
+        controls.automatic = false;
+        controls.held_overlay_pct = 4;
+
+        assert_eq!(effective_values(&scheduled, &controls, 10).1, 10);
     }
 
     #[test]

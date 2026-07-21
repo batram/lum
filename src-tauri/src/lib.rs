@@ -182,10 +182,16 @@ fn get_settings() -> config::Settings {
 /// Tauri command: save settings from JSON.
 #[tauri::command]
 fn save_settings(
-    settings: config::Settings,
+    mut settings: config::Settings,
     hotkey_manager: State<'_, Arc<hotkeys::HotkeyManager>>,
 ) -> Result<bool, String> {
     hotkeys::validate_config(&settings.hotkeys)?;
+    let gamma_floor = settings.developer.gamma_floor_percent();
+    settings.developer.minimum_gamma_percent = gamma_floor;
+    settings.brightness.overlay_day_percent =
+        settings.brightness.overlay_day_percent.max(gamma_floor);
+    settings.brightness.overlay_night_percent =
+        settings.brightness.overlay_night_percent.max(gamma_floor);
     settings.save();
     hotkey_manager.update(settings.hotkeys.clone());
     Ok(true)

@@ -240,6 +240,7 @@ impl Default for TrayClickBehavior {
 pub struct DeveloperConfig {
     pub tray_click_behavior: TrayClickBehavior,
     pub close_on_focus_loss: bool,
+    pub minimum_gamma_percent: u8,
 }
 
 impl Default for DeveloperConfig {
@@ -247,7 +248,14 @@ impl Default for DeveloperConfig {
         Self {
             tray_click_behavior: TrayClickBehavior::WindowsTimed,
             close_on_focus_loss: true,
+            minimum_gamma_percent: 10,
         }
+    }
+}
+
+impl DeveloperConfig {
+    pub fn gamma_floor_percent(&self) -> u8 {
+        self.minimum_gamma_percent.clamp(1, 100)
     }
 }
 
@@ -287,7 +295,17 @@ impl Default for Settings {
 
 #[cfg(test)]
 mod tests {
-    use super::guess_location;
+    use super::{guess_location, DeveloperConfig};
+
+    #[test]
+    fn gamma_floor_defaults_to_ten_and_stays_in_range() {
+        let mut developer = DeveloperConfig::default();
+        assert_eq!(developer.gamma_floor_percent(), 10);
+        developer.minimum_gamma_percent = 0;
+        assert_eq!(developer.gamma_floor_percent(), 1);
+        developer.minimum_gamma_percent = 255;
+        assert_eq!(developer.gamma_floor_percent(), 100);
+    }
 
     #[test]
     fn locale_disambiguates_shared_timezone() {

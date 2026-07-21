@@ -4,7 +4,7 @@
 
   const emptyState = {
     phase: "loading", intensity: 0,
-    scheduled_color_temp_k: 6500, scheduled_hardware_brightness_pct: 100, scheduled_overlay_brightness_pct: 100,
+    scheduled_color_temp_k: 6500, scheduled_hardware_brightness_pct: 100, scheduled_overlay_brightness_pct: 100, minimum_gamma_percent: 10,
     color_temp_k: 6500, hardware_brightness_pct: 100, overlay_brightness_pct: 100,
     sunrise: "--:--", sunset: "--:--",
     next_transition_label: "Calculating schedule", next_transition_time: "--:--",
@@ -29,6 +29,16 @@
   let requestVersion = 0;
   let automaticRequestVersion = 0;
   let syncRevision = 0;
+
+  function gammaDisplayPercent(actual, floor = state.minimum_gamma_percent) {
+    if (floor >= 100) return 0;
+    return Math.round(((Math.max(floor, Math.min(100, actual)) - floor) / (100 - floor)) * 100);
+  }
+
+  function gammaActualPercent(display, floor = state.minimum_gamma_percent) {
+    if (floor >= 100) return 100;
+    return Math.round(floor + (Math.max(0, Math.min(100, display)) / 100) * (100 - floor));
+  }
 
   onMount(() => {
     const onKey = (event) => event.key === "Escape" && invoke("hide_quick_panel");
@@ -71,7 +81,7 @@
       }
       if (!loaded || (!interacting && !pendingAdjustment)) {
         hardwareBrightness = next.hardware_brightness_pct;
-        overlayBrightness = next.overlay_brightness_pct;
+        overlayBrightness = gammaDisplayPercent(next.overlay_brightness_pct, next.minimum_gamma_percent);
         temperature = next.color_temp_k;
       }
       loaded = true;
@@ -86,7 +96,7 @@
     resetSettling = false;
     resetZeroReads = 0;
     const desiredHardware = Number(hardwareBrightness);
-    const desiredOverlay = Number(overlayBrightness);
+    const desiredOverlay = gammaActualPercent(Number(overlayBrightness));
     const desiredTemperature = Number(temperature);
     const hardwareOffset = Math.round(desiredHardware - state.scheduled_hardware_brightness_pct);
     const overlayOffset = Math.round(desiredOverlay - state.scheduled_overlay_brightness_pct);
@@ -170,7 +180,7 @@
     };
     pendingAutomatic = { value: true };
     hardwareBrightness = state.scheduled_hardware_brightness_pct;
-    overlayBrightness = state.scheduled_overlay_brightness_pct;
+    overlayBrightness = gammaDisplayPercent(state.scheduled_overlay_brightness_pct);
     temperature = state.scheduled_color_temp_k;
     state = { ...state, automatic: true, hardware_offset_pct: 0, overlay_offset_pct: 0, temperature_offset_k: 0 };
     try {
@@ -205,7 +215,7 @@
     try {
       const settings = await invoke("get_settings");
       const hardware = Math.round(Number(hardwareBrightness));
-      const overlay = Math.round(Number(overlayBrightness));
+      const overlay = gammaActualPercent(Number(overlayBrightness));
       const colorTemperature = Math.round(Number(temperature));
       if (target === "night") {
         settings.brightness.hardware_night_percent = hardware;
@@ -277,7 +287,7 @@
     </label>
     <label>
       <span class="label-row"><span>Gamma</span><output>{overlayBrightness}%</output></span>
-      <input style={`--value:${overlayBrightness}%`} class="overlay" aria-label="Temporary gamma brightness" type="range" min="5" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off || persisting} />
+      <input style={`--value:${overlayBrightness}%`} class="overlay" aria-label="Temporary gamma brightness" type="range" min="0" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off || persisting} />
     </label>
     <label>
       <span class="label-row"><span>Warmth</span><output>{temperature}K</output></span>

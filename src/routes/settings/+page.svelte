@@ -10,6 +10,19 @@
     openUrl(event.currentTarget.href);
   }
 
+  function clampMinimumGamma() {
+    settings.developer.minimum_gamma_percent = Math.max(1, Math.min(100, Number(settings.developer.minimum_gamma_percent) || 10));
+    settings.brightness.overlay_day_percent = Math.max(settings.developer.minimum_gamma_percent, settings.brightness.overlay_day_percent);
+    settings.brightness.overlay_night_percent = Math.max(settings.developer.minimum_gamma_percent, settings.brightness.overlay_night_percent);
+  }
+
+  function gammaDisplayPercent(actual) {
+    if (actual == null) return "—";
+    const floor = Math.max(1, Math.min(100, Number(settings?.developer.minimum_gamma_percent) || 10));
+    if (floor >= 100) return 0;
+    return Math.round(((Math.max(floor, Math.min(100, actual)) - floor) / (100 - floor)) * 100);
+  }
+
   const sections = [
     ["overview", "⌂", "Overview"],
     ["schedule", "◴", "Schedule"],
@@ -193,7 +206,7 @@
         <section class="status-hero">
           <div class="status-orb" class:night={(state?.intensity ?? 0) > .45}></div>
           <div><span class="eyebrow">Right now</span><h2>{phaseName(state?.phase)} light</h2><p>{state?.automatic ? `${state?.next_transition_label} at ${state?.next_transition_time}` : "Holding your current appearance"}</p></div>
-          <div class="live-values"><span><b>{state?.hardware_brightness_pct ?? "—"}%</b>Hardware</span><span><b>{state?.overlay_brightness_pct ?? "—"}%</b>Overlay</span><span><b>{state?.color_temp_k ?? "—"}K</b>Temperature</span></div>
+          <div class="live-values"><span><b>{state?.hardware_brightness_pct ?? "—"}%</b>Hardware</span><span><b>{gammaDisplayPercent(state?.overlay_brightness_pct)}%</b>Overlay</span><span><b>{state?.color_temp_k ?? "—"}K</b>Temperature</span></div>
         </section>
         <div class="overview-grid">
           <button class="summary-card" type="button" onclick={() => navigate("schedule")}><span class="card-icon blue">◴</span><span><strong>Sun schedule</strong><small>Sunrise {state?.sunrise} · Sunset {state?.sunset}</small></span><b>›</b></button>
@@ -277,6 +290,7 @@
             </select>
           </label>
           <label class="toggle-row"><span><strong>Close popup when focus is lost</strong><small>Turn this off to keep the quick panel open while using other windows.</small></span><input type="checkbox" bind:checked={settings.developer.close_on_focus_loss} /></label>
+          <label class="select-row gamma-floor-row"><span><strong>Minimum gamma brightness</strong><small>Prevents the schedule and quick panel from making the screen unreadably dark.</small></span><div class="number-field"><input type="number" min="1" max="100" step="1" bind:value={settings.developer.minimum_gamma_percent} onchange={clampMinimumGamma} /><em>%</em></div></label>
         </section>
       {/if}
     {/if}
@@ -322,6 +336,7 @@
   .field-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:12px; }.field-grid > label { display:grid;gap:7px;color:#aeb3bf;font-size:11px; }.number-field { display:flex;align-items:center;border:1px solid #3a3e49;border-radius:9px;background:#1a1b22;overflow:hidden; }.number-field input { width:72px;padding:9px;border:0;background:transparent;color:white;outline:none; }.number-field em { color:#737987;font-size:10px;font-style:normal; }
   .toggle-row { display:flex;align-items:center;justify-content:space-between;gap:20px;padding-top:17px;border-top:1px solid #2e313b; }.toggle-row > span { display:grid;gap:4px; }.toggle-row strong {font-size:12px}.toggle-row small{color:#858b98}.toggle-row input{width:38px;height:20px;accent-color:#6f9ce8}.rows{display:grid;gap:18px}.rows .toggle-row:first-child{padding-top:0;border-top:0}
   .select-row{display:flex;align-items:center;justify-content:space-between;gap:28px;margin-bottom:17px}.select-row>span{display:grid;gap:4px;max-width:470px}.select-row strong{font-size:12px}.select-row small{color:#858b98;font-size:11px;line-height:1.45}.select-row select{min-width:250px;padding:9px 34px 9px 11px;border:1px solid #3a3e49;border-radius:9px;background:#191a21;color:#eef0f5;outline:none;font-size:11px}.select-row select:focus{border-color:#6c93d2;box-shadow:0 0 0 3px rgba(108,147,210,.12)}
+  .gamma-floor-row{margin:17px 0 0;padding-top:17px;border-top:1px solid #2e313b}.gamma-floor-row .number-field{position:relative;flex:0 0 auto}.gamma-floor-row .number-field input{width:82px;padding-right:29px;text-align:right;appearance:textfield}.gamma-floor-row .number-field input::-webkit-inner-spin-button,.gamma-floor-row .number-field input::-webkit-outer-spin-button{margin:0;appearance:none}.gamma-floor-row .number-field em{position:absolute;top:50%;right:11px;pointer-events:none;transform:translateY(-50%)}
   .empty{display:grid;justify-items:center;padding:30px 20px;color:#818795;text-align:center}.empty strong{margin-top:8px;color:#c4c8d0}.empty p{max-width:430px;margin:6px 0 0;font-size:11px}.empty.compact{padding:24px}.add-app{display:flex;gap:8px}.add-app input{flex:1;padding:10px 12px;border:1px solid #393d48;border-radius:9px;background:#191a21;color:white;outline:none}.add-app input:focus{border-color:#6c93d2}.add-app button,.secondary{padding:9px 13px;border:1px solid #424653;border-radius:9px;background:#2b2e38;cursor:pointer;font-size:11px}.inline-error{color:#ffaaa3;font-size:11px}.app-list{margin-top:13px}.app-list>div:not(.empty){display:flex;align-items:center;gap:11px;padding:12px 2px;border-top:1px solid #2e313b}.app-list strong{font-size:12px}.app-list button{margin-left:auto;border:0;background:transparent;color:#d78d89;cursor:pointer;font-size:11px}.app-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:#2b2e38;color:#959ba8}
   .location-summary{display:flex;align-items:center;gap:12px}.location-summary>span{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#2b3040;color:#8aaff0;font-size:18px}.location-summary>div{display:grid;gap:4px}.location-summary small{color:#858b98}.map-panel{margin-top:17px}.notice{display:grid;gap:5px;padding:16px;border-radius:12px}.notice.danger{background:#3b2327;color:#ffb5af}.loading{color:#8c929f}.error{color:#ffaaa3}
   .map-credit{margin:14px 0 0;color:#737a88;font-size:12px}.map-credit a{color:#8aaff0;text-decoration:none}.map-credit a:hover{text-decoration:underline}
