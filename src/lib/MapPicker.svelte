@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import L from "leaflet";
   import "leaflet/dist/leaflet.css";
-  import worldGeoJSON from "$lib/world-geo.json";
 
   let { lat = 40.7128, lng = -74.006, onPick = () => {} } = $props();
 
@@ -13,6 +12,8 @@
   let lngInput = $state("");
 
   onMount(() => {
+    const controller = new AbortController();
+
     latInput = lat.toString();
     lngInput = lng.toString();
     map = L.map(mapEl, {
@@ -23,31 +24,53 @@
       zoomControl: true,
       attributionControl: false,
       worldCopyJump: true,
-      maxBounds: [[-90, -200], [90, 200]],
+      maxBounds: [
+        [-90, -200],
+        [90, 200],
+      ],
       maxBoundsViscosity: 0.8,
     });
 
     // Dark-friendly background
     map.getContainer().style.background = "#1a2332";
 
-    // Natural Earth boundaries are bundled with the app: detailed, but fully offline.
-    L.geoJSON(worldGeoJSON, {
-      style: {
-        fillColor: "#344f46",
-        fillOpacity: 0.9,
-        color: "#719184",
-        weight: 0.65,
-      },
-    }).addTo(map);
+    // Natural Earth boundaries are a separate bundled asset, loaded only when
+    // the map is mounted. No network connection is required.
+    async function loadBoundaries() {
+      const response = await fetch("/world-geo.json", {
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load map boundaries: ${response.status}`);
+      }
 
-    // Circle marker (no external images)
-    marker = L.circleMarker([lat, lng], {
-      radius: 8,
-      fillColor: "#ff6b4a",
-      fillOpacity: 1,
-      color: "#fff",
-      weight: 2,
-    }).addTo(map);
+      const worldGeoJSON = await response.json();
+      if (!map) return;
+
+      L.geoJSON(worldGeoJSON, {
+        style: {
+          fillColor: "#344f46",
+          fillOpacity: 0.9,
+          color: "#719184",
+          weight: 0.65,
+        },
+      }).addTo(map);
+
+      // Circle marker (no external images)
+      marker = L.circleMarker([lat, lng], {
+        radius: 8,
+        fillColor: "#ff6b4a",
+        fillOpacity: 1,
+        color: "#fff",
+        weight: 2,
+      }).addTo(map);
+    }
+
+    loadBoundaries().catch((error) => {
+      if (!controller.signal.aborted) {
+        console.error("Could not load map boundaries:", error);
+      }
+    });
 
     map.on("click", (e) => {
       const { lat: la, lng: ln } = e.latlng;
@@ -58,6 +81,7 @@
     });
 
     return () => {
+      controller.abort();
       map.remove();
       map = null;
     };
@@ -86,11 +110,25 @@
   <div class="manual-row">
     <label>
       Lat
-      <input type="number" step="0.0001" min="-90" max="90" bind:value={latInput} onchange={applyManual} />
+      <input
+        type="number"
+        step="0.0001"
+        min="-90"
+        max="90"
+        bind:value={latInput}
+        onchange={applyManual}
+      />
     </label>
     <label>
       Lng
-      <input type="number" step="0.0001" min="-180" max="180" bind:value={lngInput} onchange={applyManual} />
+      <input
+        type="number"
+        step="0.0001"
+        min="-180"
+        max="180"
+        bind:value={lngInput}
+        onchange={applyManual}
+      />
     </label>
     <span class="hint">Click map or type coordinates</span>
   </div>
