@@ -5,6 +5,11 @@
   import MapPicker from "$lib/MapPicker.svelte";
   import Curves from "$lib/Curves.svelte";
 
+  function openExternalUrl(event) {
+    event.preventDefault();
+    openUrl(event.currentTarget.href);
+  }
+
   const sections = [
     ["overview", "⌂", "Overview"],
     ["schedule", "◴", "Schedule"],
@@ -248,7 +253,7 @@
           <div class="card-heading"><div><h2>Location</h2><p>Lum uses coordinates only to calculate local solar times.</p></div><button class="secondary" type="button" onclick={() => editingLocation = !editingLocation}>{editingLocation ? "Done" : "Change location"}</button></div>
           <div class="location-summary"><span>⌖</span><div><strong>{settings.location.latitude.toFixed(2)}°, {settings.location.longitude.toFixed(2)}°</strong><small>Sunrise {state?.sunrise} · Sunset {state?.sunset}</small></div></div>
           {#if editingLocation}<div class="map-panel"><MapPicker lat={settings.location.latitude} lng={settings.location.longitude} onPick={pickLocation} /></div>{/if}
-          <p class="map-credit">Map by Natural Earth: <a href="https://www.naturalearthdata.com/" onclick={(event) => { event.preventDefault(); openUrl(event.currentTarget.href); }}>naturalearthdata.com</a></p>
+          <p class="map-credit">Map by Natural Earth: <a href="https://www.naturalearthdata.com/" onclick={openExternalUrl}>naturalearthdata.com</a></p>
         </section>
         <section class="card rows">
           <label class="toggle-row"><span><strong>Start Lum with Windows</strong><small>Launch quietly in the notification area after sign-in.</small></span><input type="checkbox" checked={autostart} onchange={toggleAutostart} /></label>
