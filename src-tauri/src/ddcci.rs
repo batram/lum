@@ -13,6 +13,7 @@ extern "system" {
         lpfnEnum: unsafe extern "system" fn(*mut c_void, *mut c_void, *mut RECT, isize) -> i32,
         dwData: isize,
     ) -> i32;
+    fn GetMonitorInfoW(hMonitor: *mut c_void, lpmi: *mut MonitorInfoExW) -> i32;
 }
 
 // --- dxva2.dll: DDC/CI physical monitor control ---
@@ -62,6 +63,27 @@ struct RECT {
 }
 
 #[repr(C)]
+struct MonitorInfoExW {
+    cb_size: u32,
+    monitor: RECT,
+    work: RECT,
+    flags: u32,
+    device: [u16; 32],
+}
+
+impl MonitorInfoExW {
+    fn new() -> Self {
+        Self {
+            cb_size: std::mem::size_of::<Self>() as u32,
+            monitor: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            work: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            flags: 0,
+            device: [0; 32],
+        }
+    }
+}
+
+#[repr(C)]
 #[derive(Clone)]
 struct PhysicalMonitor {
     handle: *mut c_void,
@@ -75,6 +97,8 @@ pub struct MonitorInfo {
     pub index: usize,
     /// Description from the driver (may be empty).
     pub description: String,
+    /// Windows logical display name (for example `\\.\DISPLAY1`).
+    pub device_name: String,
     /// Whether DDC/CI brightness control is supported.
     pub supports_brightness: bool,
     /// Whether DDC/CI contrast control is supported.
@@ -95,10 +119,18 @@ unsafe impl Send for MonitorHandle {}
 
 /// Global cache of discovered monitors (protected by Mutex).
 static MONITORS: Mutex<Option<Vec<MonitorHandle>>> = Mutex::new(None);
+static ACTIVE_DISPLAY_NAMES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn normalized_display_names(names: &[String]) -> Vec<String> {
+    let mut normalized: Vec<String> = names.iter().map(|name| name.to_lowercase()).collect();
+    normalized.sort_unstable();
+    normalized.dedup();
+    normalized
+}
 
 /// Enumerate all physical monitors and probe DDC/CI capabilities.
-/// Call once at startup. Results are cached.
-pub fn enumerate_monitors() -> Vec<MonitorInfo> {
+/// Results are cached until the active logical display set changes.
+pub fn enumerate_monitors(active_display_names: &[String]) -> Vec<MonitorInfo> {
     let mut hmonitors: Vec<*mut c_void> = Vec::new();
 
     // Collect HMONITOR handles
@@ -127,6 +159,13 @@ pub fn enumerate_monitors() -> Vec<MonitorInfo> {
     let mut index = 0;
 
     for hmon in &hmonitors {
+        let mut logical_info = MonitorInfoExW::new();
+        let device_name = if unsafe { GetMonitorInfoW(*hmon, &mut logical_info) } != 0 {
+            let len = logical_info.device.iter().position(|&c| c == 0).unwrap_or(32);
+            String::from_utf16_lossy(&logical_info.device[..len])
+        } else {
+            String::new()
+        };
         let mut count: u32 = 0;
         let ok = unsafe { GetNumberOfPhysicalMonitorsFromHMONITOR(*hmon, &mut count) };
         if ok == 0 || count == 0 {
@@ -170,6 +209,7 @@ pub fn enumerate_monitors() -> Vec<MonitorInfo> {
             let info = MonitorInfo {
                 index,
                 description,
+                device_name: device_name.clone(),
                 supports_brightness: brightness_ok != 0,
                 supports_contrast: contrast_ok != 0,
                 brightness_min: min_b,
@@ -189,6 +229,7 @@ pub fn enumerate_monitors() -> Vec<MonitorInfo> {
     }
 
     *MONITORS.lock().unwrap() = Some(monitor_handles);
+    *ACTIVE_DISPLAY_NAMES.lock().unwrap() = normalized_display_names(active_display_names);
 
     eprintln!(
         "[lum] DDC/CI: found {} monitor(s), {} with brightness control",
@@ -197,6 +238,18 @@ pub fn enumerate_monitors() -> Vec<MonitorInfo> {
     );
 
     infos
+}
+
+/// Rebuild cached DDC/CI handles after a display connection change.
+pub fn refresh_monitors_if_needed(active_display_names: &[String]) -> bool {
+    let current = normalized_display_names(active_display_names);
+    if *ACTIVE_DISPLAY_NAMES.lock().unwrap() == current {
+        return false;
+    }
+
+    cleanup();
+    enumerate_monitors(active_display_names);
+    true
 }
 
 /// Get cached monitor info (call enumerate_monitors first).
@@ -212,13 +265,22 @@ pub fn get_monitors() -> Vec<MonitorInfo> {
 /// Set brightness (0–100%) on all DDC/CI-capable monitors.
 /// Scales the percentage to each monitor's min/max range.
 pub fn set_all_brightness(percent: u8) -> bool {
+    set_brightness_except(percent, &[])
+}
+
+/// Set brightness on DDC/CI displays except the named logical displays.
+pub fn set_brightness_except(percent: u8, excluded: &[String]) -> bool {
     let percent = percent.clamp(0, 100) as f64 / 100.0;
     let mut any_success = false;
 
     let monitors = MONITORS.lock().unwrap();
     if let Some(monitors) = monitors.as_ref() {
         for m in monitors {
-            if !m.info.supports_brightness {
+            if !m.info.supports_brightness
+                || excluded
+                    .iter()
+                    .any(|item| item.eq_ignore_ascii_case(&m.info.device_name))
+            {
                 continue;
             }
             let range = m.info.brightness_max.saturating_sub(m.info.brightness_min);
@@ -231,6 +293,35 @@ pub fn set_all_brightness(percent: u8) -> bool {
                     "[lum] DDC/CI: SetMonitorBrightness failed for monitor {}",
                     m.info.index
                 );
+            }
+        }
+    }
+
+    any_success
+}
+
+/// Set brightness only on the named logical displays.
+pub fn set_brightness_for_displays(percent: u8, included: &[String]) -> bool {
+    let percent = percent.clamp(0, 100) as f64 / 100.0;
+    let mut any_success = false;
+    let monitors = MONITORS.lock().unwrap();
+
+    if let Some(monitors) = monitors.as_ref() {
+        for monitor in monitors {
+            if !monitor.info.supports_brightness
+                || !included
+                    .iter()
+                    .any(|item| item.eq_ignore_ascii_case(&monitor.info.device_name))
+            {
+                continue;
+            }
+            let range = monitor
+                .info
+                .brightness_max
+                .saturating_sub(monitor.info.brightness_min);
+            let target = monitor.info.brightness_min + (range as f64 * percent).round() as u32;
+            if unsafe { SetMonitorBrightness(monitor.handle, target) } != 0 {
+                any_success = true;
             }
         }
     }
@@ -254,5 +345,23 @@ pub fn cleanup() {
                 DestroyPhysicalMonitors(phys.len() as u32, phys.as_mut_ptr());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalized_display_names;
+
+    #[test]
+    fn display_inventory_comparison_ignores_case_order_and_duplicates() {
+        let names = vec![
+            r"\\.\DISPLAY2".to_string(),
+            r"\\.\display1".to_string(),
+            r"\\.\DISPLAY2".to_string(),
+        ];
+        assert_eq!(
+            normalized_display_names(&names),
+            vec![r"\\.\display1".to_string(), r"\\.\display2".to_string()]
+        );
     }
 }

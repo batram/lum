@@ -148,16 +148,26 @@ fn get_foreground_app() -> Option<String> {
 /// Tauri command: get list of monitors with DDC/CI capabilities.
 #[tauri::command]
 fn get_monitors() -> Vec<serde_json::Value> {
-    ddcci::get_monitors()
-        .iter()
-        .map(|m| {
+    let physical = ddcci::get_monitors();
+    gamma::get_display_names()
+        .into_iter()
+        .enumerate()
+        .map(|(index, device_name)| {
+            let matches: Vec<_> = physical
+                .iter()
+                .filter(|monitor| monitor.device_name.eq_ignore_ascii_case(&device_name))
+                .collect();
+            let description = matches
+                .iter()
+                .find(|monitor| !monitor.description.is_empty())
+                .map(|monitor| monitor.description.as_str())
+                .unwrap_or(&device_name);
             serde_json::json!({
-                "index": m.index,
-                "description": m.description,
-                "supports_brightness": m.supports_brightness,
-                "supports_contrast": m.supports_contrast,
-                "brightness_min": m.brightness_min,
-                "brightness_max": m.brightness_max,
+                "index": index,
+                "device_name": device_name,
+                "description": description,
+                "supports_brightness": matches.iter().any(|monitor| monitor.supports_brightness),
+                "supports_contrast": matches.iter().any(|monitor| monitor.supports_contrast),
             })
         })
         .collect()
@@ -225,11 +235,12 @@ pub fn run() {
                 let _ = win.hide();
             }
 
+            // Enumerate DDC/CI monitors before the first engine tick so display
+            // exclusions can restore hardware brightness immediately.
+            ddcci::enumerate_monitors(&gamma::get_display_names());
+
             // Start the fade engine tick loop
             let _handle = fade_engine.start();
-
-            // Enumerate DDC/CI monitors
-            ddcci::enumerate_monitors();
 
             // --- Tray menu ---
             let show_i = MenuItem::with_id(app, "show", "Quick controls", true, None::<&str>)?;

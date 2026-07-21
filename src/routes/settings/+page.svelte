@@ -65,9 +65,17 @@
     const stateInterval = setInterval(async () => {
       try { state = await invoke("get_app_state"); } catch { /* status is supplementary */ }
     }, 1000);
+    const monitorInterval = setInterval(async () => {
+      try {
+        const latestMonitors = await invoke("get_monitors");
+        if (!disposed && JSON.stringify(latestMonitors) !== JSON.stringify(monitors)) {
+          monitors = latestMonitors;
+        }
+      } catch { /* retain the last known display inventory */ }
+    }, 2000);
     return () => {
       disposed = true;
-      clearInterval(stateInterval); clearTimeout(saveTimer);
+      clearInterval(stateInterval); clearInterval(monitorInterval); clearTimeout(saveTimer);
     };
   });
 
@@ -137,6 +145,14 @@
   }
 
   function navigate(section) { active = section; }
+  function displayEffectsEnabled(deviceName) {
+    return !settings.disabled_displays.includes(deviceName);
+  }
+  function setDisplayEffectsEnabled(deviceName, enabled) {
+    settings.disabled_displays = enabled
+      ? settings.disabled_displays.filter((name) => name !== deviceName)
+      : [...new Set([...settings.disabled_displays, deviceName])];
+  }
   function phaseName(value) { return value ? value[0].toUpperCase() + value.slice(1) : "Current"; }
   let needsAttention = $derived(settings && (Math.abs(settings.location.latitude - 40.7128) < .0001 && Math.abs(settings.location.longitude + 74.006) < .0001));
 </script>
@@ -182,6 +198,14 @@
       {:else if active === "schedule"}
         <header><p>Settings</p><h1>Schedule</h1><span>Shape how your displays change through the day.</span></header>
         <Curves {settings} {monitors} />
+        <section class="card rows">
+          <div class="card-heading"><div><h2>Displays</h2><p>Choose which displays Lum may adjust.</p></div></div>
+          {#each monitors as monitor}
+            <label class="toggle-row"><span><strong>{monitor.description || monitor.device_name}</strong><small>{monitor.supports_brightness ? "Color, overlay, and hardware brightness effects" : "Color and overlay effects"} · {monitor.device_name}</small></span><input type="checkbox" checked={displayEffectsEnabled(monitor.device_name)} onchange={(event) => setDisplayEffectsEnabled(monitor.device_name, event.currentTarget.checked)} /></label>
+          {:else}
+            <p class="empty-copy">No active displays were detected.</p>
+          {/each}
+        </section>
         <section class="card">
           <div class="card-heading"><div><h2>Transition timing</h2><p>Fine-tune when gradual changes begin and end.</p></div></div>
           <div class="field-grid">

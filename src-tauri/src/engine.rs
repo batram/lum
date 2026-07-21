@@ -179,7 +179,8 @@ impl FadeEngine {
         );
         let temperature = (current.scheduled_color_temp_k as i32 + temperature_offset_k)
             .clamp(1800, 10000) as u32;
-        apply_values(temperature, hardware, overlay);
+        let settings = Settings::load();
+        apply_values(temperature, hardware, overlay, &settings.disabled_displays);
         let mut state = self.state.lock().unwrap();
         state.automatic = true;
         state.effects_off = false;
@@ -231,6 +232,7 @@ impl FadeEngine {
                 values.temperature_k,
                 values.hardware_pct,
                 values.overlay_pct,
+                &settings.disabled_displays,
             );
             let mut state = self.state.lock().unwrap();
             state.preview_minute = Some(minute.min(1439));
@@ -249,7 +251,7 @@ impl FadeEngine {
         let scheduled = schedule_values(&settings, now);
         let controls = self.controls.lock().unwrap().clone();
         let (hardware, overlay, temperature) = effective_values(&scheduled, &controls);
-        apply_values(temperature, hardware, overlay);
+        apply_values(temperature, hardware, overlay, &settings.disabled_displays);
         let mut state = self.state.lock().unwrap();
         state.preview_minute = None;
         state.preview_theme_dark = None;
@@ -303,8 +305,34 @@ impl FadeEngine {
         let engine = Arc::clone(self);
         thread::spawn(move || {
             let mut last_theme_dark = None;
+            let mut last_disabled_displays: Vec<String> = Vec::new();
             while !engine.stop.load(Ordering::Relaxed) {
                 let settings = Settings::load();
+                let display_inventory_changed =
+                    ddcci::refresh_monitors_if_needed(&gamma::get_display_names());
+                if display_inventory_changed && !settings.disabled_displays.is_empty() {
+                    ddcci::set_brightness_for_displays(
+                        settings.brightness.hardware_day_percent,
+                        &settings.disabled_displays,
+                    );
+                }
+                let newly_disabled: Vec<String> = settings
+                    .disabled_displays
+                    .iter()
+                    .filter(|name| {
+                        !last_disabled_displays
+                            .iter()
+                            .any(|previous| previous.eq_ignore_ascii_case(name))
+                    })
+                    .cloned()
+                    .collect();
+                if !newly_disabled.is_empty() {
+                    ddcci::set_brightness_for_displays(
+                        settings.brightness.hardware_day_percent,
+                        &newly_disabled,
+                    );
+                }
+                last_disabled_displays = settings.disabled_displays.clone();
                 let real_now = Local::now().naive_local();
                 let mut controls = engine.controls.lock().unwrap().clone();
                 if controls
@@ -338,7 +366,12 @@ impl FadeEngine {
                     effective_values(&scheduled, &controls)
                 };
                 if !controls.effects_off && !app_bypassed {
-                    apply_values(temperature, hardware, overlay);
+                    apply_values(
+                        temperature,
+                        hardware,
+                        overlay,
+                        &settings.disabled_displays,
+                    );
                 }
 
                 if settings.theme.auto_switch && controls.preview_minute.is_none() {
@@ -404,11 +437,16 @@ fn effective_values(scheduled: &ScheduleValues, controls: &RuntimeControls) -> (
     )
 }
 
-fn apply_values(color_temp: u32, hardware_pct: u8, overlay_pct: u8) -> bool {
+fn apply_values(
+    color_temp: u32,
+    hardware_pct: u8,
+    overlay_pct: u8,
+    disabled_displays: &[String],
+) -> bool {
     let rgb = kelvin_to_rgb(color_temp);
-    ddcci::set_all_brightness(hardware_pct);
+    ddcci::set_brightness_except(hardware_pct, disabled_displays);
     let ramps = GammaRamps::from_color_and_brightness(&rgb, overlay_pct as f64 / 100.0);
-    gamma::set_gamma_ramp(&ramps)
+    gamma::set_gamma_ramp_except(&ramps, disabled_displays)
 }
 
 fn schedule_values(settings: &Settings, now: NaiveDateTime) -> ScheduleValues {

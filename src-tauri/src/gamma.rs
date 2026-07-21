@@ -118,10 +118,30 @@ fn get_display_devices() -> Vec<Vec<u16>> {
     devices
 }
 
+/// Windows device names for all active logical displays.
+pub fn get_display_names() -> Vec<String> {
+    get_display_devices()
+        .iter()
+        .map(|name| {
+            let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+            String::from_utf16_lossy(&name[..len])
+        })
+        .collect()
+}
+
+fn is_excluded(name: &str, excluded: &[String]) -> bool {
+    excluded.iter().any(|item| item.eq_ignore_ascii_case(name))
+}
+
 /// Apply a gamma ramp to ALL active displays.
 ///
 /// Returns true if at least one display succeeded.
 pub fn set_gamma_ramp(ramps: &GammaRamps) -> bool {
+    set_gamma_ramp_except(ramps, &[])
+}
+
+/// Apply a gamma ramp to active displays, restoring excluded displays to identity.
+pub fn set_gamma_ramp_except(ramps: &GammaRamps, excluded: &[String]) -> bool {
     let devices = get_display_devices();
     if devices.is_empty() {
         eprintln!("[lum] No active display devices found");
@@ -129,9 +149,20 @@ pub fn set_gamma_ramp(ramps: &GammaRamps) -> bool {
     }
 
     let mut raw = ramps.as_raw();
+    let mut identity = GammaRamps::identity().as_raw();
     let mut any_success = false;
 
     for device_name in &devices {
+        let name_len = device_name
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(device_name.len());
+        let name = String::from_utf16_lossy(&device_name[..name_len]);
+        let selected_ramp = if is_excluded(&name, excluded) {
+            &mut identity
+        } else {
+            &mut raw
+        };
         unsafe {
             let hdc = CreateDCW(
                 std::ptr::null(),
@@ -143,7 +174,7 @@ pub fn set_gamma_ramp(ramps: &GammaRamps) -> bool {
                 eprintln!("[lum] CreateDCW failed for a display");
                 continue;
             }
-            let result = SetDeviceGammaRamp(hdc, raw.as_mut_ptr() as *mut c_void);
+            let result = SetDeviceGammaRamp(hdc, selected_ramp.as_mut_ptr() as *mut c_void);
             DeleteDC(hdc);
             if result != 0 {
                 any_success = true;
@@ -205,5 +236,17 @@ pub fn is_gamma_identity() -> bool {
                 && ramps.blue == identity.blue
         }
         None => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_excluded;
+
+    #[test]
+    fn display_exclusions_are_case_insensitive() {
+        let excluded = vec![r"\\.\DISPLAY2".to_string()];
+        assert!(is_excluded(r"\\.\display2", &excluded));
+        assert!(!is_excluded(r"\\.\DISPLAY1", &excluded));
     }
 }

@@ -26,6 +26,10 @@ pub struct Settings {
     /// Brightness configuration.
     pub brightness: BrightnessConfig,
 
+    /// Windows display device names that Lum must leave untouched.
+    #[serde(default)]
+    pub disabled_displays: Vec<String>,
+
     /// Dark/light theme switching.
     pub theme: ThemeConfig,
 
@@ -268,6 +272,7 @@ impl Default for Settings {
                 overlay_day_percent: 100,
                 overlay_night_percent: 100,
             },
+            disabled_displays: Vec::new(),
             theme: ThemeConfig {
                 auto_switch: true,
                 dark_offset_min: 0,
