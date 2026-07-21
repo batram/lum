@@ -12,7 +12,6 @@ extern "system" {
     fn CreateDCW(lpszDriver: *const u16, lpszDevice: *const u16, lpszOutput: *const u16, lpInitData: *const c_void) -> *mut c_void;
     fn DeleteDC(hdc: *mut c_void) -> i32;
     fn SetDeviceGammaRamp(hdc: *mut c_void, lpRamp: *mut c_void) -> i32;
-    fn GetDeviceGammaRamp(hdc: *mut c_void, lpRamp: *mut c_void) -> i32;
     fn EnumDisplayDevicesW(lpDevice: *const u16, iDevNum: u32, lpDisplayDevice: *mut DISPLAY_DEVICEW, dwFlags: u32) -> i32;
 }
 
@@ -193,50 +192,6 @@ pub fn set_gamma_ramp_except(ramps: &GammaRamps, excluded: &[String]) -> bool {
 /// Reset gamma to identity (neutral — no color/brightness modification).
 pub fn reset_gamma() -> bool {
     set_gamma_ramp(&GammaRamps::identity())
-}
-
-/// Get the current gamma ramp from the primary display.
-pub fn get_gamma_ramp() -> Option<GammaRamps> {
-    let devices = get_display_devices();
-    let primary = devices.first()?;
-
-    unsafe {
-        let hdc = CreateDCW(
-            std::ptr::null(),
-            primary.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-        );
-        if hdc.is_null() {
-            return None;
-        }
-        let mut raw: [[u16; 256]; 3] = [[0; 256]; 3];
-        let result = GetDeviceGammaRamp(hdc, raw.as_mut_ptr() as *mut c_void);
-        DeleteDC(hdc);
-
-        if result != 0 {
-            Some(GammaRamps {
-                red: raw[0],
-                green: raw[1],
-                blue: raw[2],
-            })
-        } else {
-            None
-        }
-    }
-}
-
-/// Check if the current gamma ramp is identity (unmodified).
-pub fn is_gamma_identity() -> bool {
-    match get_gamma_ramp() {
-        Some(ramps) => {
-            let identity = GammaRamps::identity();
-            ramps.red == identity.red
-                && ramps.green == identity.green
-                && ramps.blue == identity.blue
-        }
-        None => true,
-    }
 }
 
 #[cfg(test)]

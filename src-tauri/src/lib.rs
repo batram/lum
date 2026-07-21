@@ -240,7 +240,7 @@ pub fn run() {
             ddcci::enumerate_monitors(&gamma::get_display_names());
 
             // Start the fade engine tick loop
-            let _handle = fade_engine.start();
+            let engine_handle = Arc::new(Mutex::new(Some(fade_engine.start())));
 
             // --- Tray menu ---
             let show_i = MenuItem::with_id(app, "show", "Quick controls", true, None::<&str>)?;
@@ -266,6 +266,7 @@ pub fn run() {
 
             // --- Tray icon ---
             let engine_for_tray = fade_engine.clone();
+            let engine_handle_for_tray = engine_handle.clone();
             let tray_click_generation = Arc::new(AtomicU64::new(0));
             let click_generation_for_tray = tray_click_generation.clone();
             let suppress_click_up_for_tray = Arc::new(AtomicBool::new(false));
@@ -285,8 +286,12 @@ pub fn run() {
                         }
                     }
                     "quit" => {
-                        // Reset gamma and cleanup DDC/CI before exiting
-                        gamma::reset_gamma();
+                        // Stop the engine before cleanup so it cannot reapply
+                        // display settings while the application is exiting.
+                        engine_for_tray.stop();
+                        if let Some(handle) = engine_handle_for_tray.lock().unwrap().take() {
+                            let _ = handle.join();
+                        }
                         ddcci::cleanup();
                         app.exit(0);
                     }
