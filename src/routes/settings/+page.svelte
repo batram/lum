@@ -1,5 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
   import MapPicker from "$lib/MapPicker.svelte";
@@ -62,6 +63,18 @@
 
   onMount(() => {
     let disposed = false;
+    let unlistenSettings;
+    listen("settings-saved", async (event) => {
+      if (disposed) return;
+      const savedSettings = event.payload;
+      settings = savedSettings;
+      lastSaved = JSON.stringify(savedSettings);
+      saveStatus = "Saved";
+      try { state = await invoke("get_app_state"); } catch { /* refreshed by the status interval */ }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenSettings = unlisten;
+    });
     (async () => {
       try {
         const [loadedSettings, liveState, monitorResult, autostartResult] = await Promise.all([
@@ -93,6 +106,7 @@
     }, 2000);
     return () => {
       disposed = true;
+      unlistenSettings?.();
       clearInterval(stateInterval); clearInterval(monitorInterval); clearTimeout(saveTimer);
     };
   });

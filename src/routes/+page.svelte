@@ -1,5 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { emit } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
 
   const emptyState = {
@@ -227,6 +228,7 @@
         settings.color.day_temp_k = colorTemperature;
       }
       await invoke("save_settings", { settings });
+      await emit("settings-saved", settings);
       resetSettling = true;
       resetZeroReads = 0;
       await invoke("reset_temporary_adjustments");
