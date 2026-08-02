@@ -1,7 +1,20 @@
-# Tauri + SvelteKit
+# Lum
 
-This template should help get you started developing with Tauri and SvelteKit in Vite.
+Lum is a lightweight Windows tray app that adjusts monitor brightness, gamma, and color temperature with the sun.
 
-## Recommended IDE Setup
+Use the quick controls for temporary adjustments, or shape the daily schedule with editable curves. Lum supports DDC/CI hardware brightness, per-display exclusions, global hotkeys, and automatic light/dark theme switching.
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).
+## Quick controls
+
+![Lum quick controls](docs/screenshots/quick-controls.png)
+
+## Schedule
+
+![Lum schedule settings](docs/screenshots/settings-schedule.png)
+
+## Build
+
+```powershell
+npm install
+npm run tauri build
+```
