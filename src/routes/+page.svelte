@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { emit } from "@tauri-apps/api/event";
+  import { emit, listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
 
   const emptyState = {
@@ -30,6 +30,10 @@
   let requestVersion = 0;
   let automaticRequestVersion = 0;
   let syncRevision = 0;
+  let hotkeyVisible = $state(false);
+  let hotkeyFlashActive = $state(false);
+  let hotkeyFadeTimer;
+  let hotkeyHideTimer;
 
   function gammaDisplayPercent(actual, floor = state.minimum_gamma_percent) {
     if (floor >= 100) return 0;
@@ -42,19 +46,41 @@
   }
 
   onMount(() => {
+    let disposed = false;
+    let unlistenHotkey;
     const onKey = (event) => event.key === "Escape" && invoke("hide_quick_panel");
     const finishInteraction = () => { interacting = false; };
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerup", finishInteraction);
     window.addEventListener("pointercancel", finishInteraction);
+    listen("hotkey-quick-controls", (event) => {
+      if (disposed) return;
+      clearTimeout(hotkeyFadeTimer);
+      clearTimeout(hotkeyHideTimer);
+      hotkeyFlashActive = true;
+      hotkeyVisible = true;
+      const durationMs = Math.max(1, Math.min(30, Number(event.payload) || 3)) * 1000;
+      hotkeyFadeTimer = setTimeout(() => { hotkeyVisible = false; }, durationMs);
+      hotkeyHideTimer = setTimeout(async () => {
+        await invoke("hide_quick_panel");
+        hotkeyFlashActive = false;
+      }, durationMs + 180);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenHotkey = unlisten;
+    });
     refresh();
     const interval = setInterval(refresh, 1000);
     return () => {
+      disposed = true;
+      unlistenHotkey?.();
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerup", finishInteraction);
       window.removeEventListener("pointercancel", finishInteraction);
       clearInterval(interval);
       clearTimeout(adjustmentTimer);
+      clearTimeout(hotkeyFadeTimer);
+      clearTimeout(hotkeyHideTimer);
     };
   });
 
@@ -268,7 +294,7 @@
 
 <svelte:head><title>Lum quick controls</title></svelte:head>
 
-<main class="panel" class:loading={!loaded}>
+<main class="panel" class:loading={!loaded} class:hotkey-fading={hotkeyFlashActive && !hotkeyVisible}>
   <div class="solar-strip" aria-label={`Sunrise ${state.sunrise}, sunset ${state.sunset}`}>
     <span class="sunrise"><i>↑</i><small>Sunrise</small><strong>{state.sunrise}</strong></span>
     <span class="sunset"><small>Sunset</small><strong>{state.sunset}</strong><i>↓</i></span>
@@ -325,7 +351,8 @@
   :global(html) { color-scheme: dark; background: transparent; }
   :global(body) { margin: 0; padding: 10px; overflow: hidden; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; background: transparent; color: #f5f6fa; }
   :global(button), :global(input) { font: inherit; }
-  .panel { position:relative;display:flex;flex-direction:column;height:calc(100vh - 20px);padding:11px 15px 10px;border:1px solid rgba(255,255,255,.14);border-radius:16px;background:linear-gradient(155deg,rgba(35,37,48,.97),rgba(24,25,33,.975));box-shadow:0 2px 7px rgba(0,0,0,.2);transition:opacity .15s ease }
+  .panel { position:relative;display:flex;flex-direction:column;height:calc(100vh - 20px);padding:11px 15px 10px;border:1px solid rgba(255,255,255,.14);border-radius:16px;background:linear-gradient(155deg,rgba(35,37,48,.97),rgba(24,25,33,.975));box-shadow:0 2px 7px rgba(0,0,0,.2);transition:opacity .18s ease }
+  .panel.hotkey-fading { opacity: 0; }
   .panel.loading { opacity: .72; }
   button { border: 0; cursor: pointer; color: inherit; }
   .solar-strip{display:flex;align-items:center;justify-content:space-between;padding:0 2px 8px;border-bottom:1px solid rgba(255,255,255,.07);font-variant-numeric:tabular-nums}

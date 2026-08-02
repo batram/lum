@@ -192,6 +192,8 @@ fn save_settings(
         settings.brightness.overlay_day_percent.max(gamma_floor);
     settings.brightness.overlay_night_percent =
         settings.brightness.overlay_night_percent.max(gamma_floor);
+    settings.hotkeys.quick_controls_duration_sec =
+        settings.hotkeys.quick_controls_duration_sec.clamp(1, 30);
     settings.save();
     hotkey_manager.update(settings.hotkeys.clone());
     Ok(true)
@@ -203,6 +205,7 @@ pub fn run() {
     let settings = config::Settings::load();
     let hotkey_manager =
         hotkeys::HotkeyManager::start(fade_engine.clone(), settings.hotkeys.clone());
+    let hotkey_manager_for_setup = hotkey_manager.clone();
     let tray_interaction = Arc::new(AtomicBool::new(false));
     let tray_interaction_for_setup = tray_interaction.clone();
     let last_focus_dismissal = Arc::new(Mutex::new(None::<Instant>));
@@ -236,6 +239,7 @@ pub fn run() {
             save_settings,
         ])
         .setup(move |app| {
+            hotkey_manager_for_setup.attach_app(app.handle().clone());
             // Ensure window stays hidden on startup (WebView2 may flash on nav errors)
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.hide();

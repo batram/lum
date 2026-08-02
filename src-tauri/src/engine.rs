@@ -300,6 +300,9 @@ impl FadeEngine {
     pub fn step_brightness(&self, delta_pct: i16) {
         let state = self.get_state();
         let target = stepped_brightness(state.hardware_brightness_pct, delta_pct) as i16;
+        if target == state.hardware_brightness_pct as i16 {
+            return;
+        }
         self.set_adjustments(
             target - state.scheduled_hardware_brightness_pct as i16,
             state.overlay_brightness_pct as i16 - state.scheduled_overlay_brightness_pct as i16,

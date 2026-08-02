@@ -206,6 +206,8 @@ pub struct HotkeyConfig {
     pub toggle_theme: String,
     pub toggle_day_night: String,
     pub boost: String,
+    pub show_quick_controls: bool,
+    pub quick_controls_duration_sec: u32,
 }
 
 impl Default for HotkeyConfig {
@@ -217,6 +219,8 @@ impl Default for HotkeyConfig {
             toggle_theme: "Alt+F5".into(),
             toggle_day_night: "Alt+F6".into(),
             boost: "Alt+F7".into(),
+            show_quick_controls: true,
+            quick_controls_duration_sec: 3,
         }
     }
 }

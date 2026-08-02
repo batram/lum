@@ -8,11 +8,19 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use tauri::{AppHandle, Emitter, Manager};
 
 extern "system" {
     fn RegisterHotKey(hwnd: *mut c_void, id: i32, fs_modifiers: u32, vk: u32) -> i32;
     fn UnregisterHotKey(hwnd: *mut c_void, id: i32) -> i32;
     fn GetMessageW(msg: *mut Msg, hwnd: *mut c_void, min: u32, max: u32) -> i32;
+    fn PeekMessageW(
+        msg: *mut Msg,
+        hwnd: *mut c_void,
+        min: u32,
+        max: u32,
+        remove: u32,
+    ) -> i32;
     fn TranslateMessage(msg: *const Msg) -> i32;
     fn DispatchMessageW(msg: *const Msg) -> isize;
     fn PostThreadMessageW(thread_id: u32, msg: u32, wparam: usize, lparam: isize) -> i32;
@@ -32,6 +40,7 @@ struct Msg {
 
 const WM_HOTKEY: u32 = 0x0312;
 const WM_RELOAD_HOTKEYS: u32 = 0x8001;
+const PM_REMOVE: u32 = 0x0001;
 const MOD_ALT: u32 = 0x0001;
 const MOD_CTRL: u32 = 0x0002;
 const MOD_SHIFT: u32 = 0x0004;
@@ -56,6 +65,7 @@ pub struct HotkeyManager {
     thread_id: AtomicU32,
     generation: AtomicU64,
     pending: Mutex<HotkeyConfig>,
+    app: Mutex<Option<AppHandle>>,
 }
 
 impl HotkeyManager {
@@ -64,10 +74,15 @@ impl HotkeyManager {
             thread_id: AtomicU32::new(0),
             generation: AtomicU64::new(1),
             pending: Mutex::new(config),
+            app: Mutex::new(None),
         });
         let listener = manager.clone();
         thread::spawn(move || listener.run(engine));
         manager
+    }
+
+    pub fn attach_app(&self, app: AppHandle) {
+        *self.app.lock().unwrap() = Some(app);
     }
 
     pub fn update(&self, config: HotkeyConfig) {
@@ -108,7 +123,20 @@ impl HotkeyManager {
                 continue;
             }
             if msg.message == WM_HOTKEY {
-                handle_action(msg.wparam as i32, &engine);
+                let mut actions = vec![msg.wparam as i32];
+                while unsafe {
+                    PeekMessageW(
+                        &mut msg,
+                        std::ptr::null_mut(),
+                        WM_HOTKEY,
+                        WM_HOTKEY,
+                        PM_REMOVE,
+                    ) != 0
+                } {
+                    actions.push(msg.wparam as i32);
+                }
+                self.handle_actions(&actions, &engine);
+                continue;
             }
             unsafe {
                 TranslateMessage(&msg);
@@ -116,6 +144,34 @@ impl HotkeyManager {
             }
         }
         unregister_all();
+    }
+
+    fn handle_actions(&self, actions: &[i32], engine: &FadeEngine) {
+        let mut brightness_delta = 0i16;
+        for &id in actions {
+            match id {
+                ID_BRIGHTER => brightness_delta = brightness_delta.saturating_add(5),
+                ID_DARKER => brightness_delta = brightness_delta.saturating_sub(5),
+                _ => {
+                    if brightness_delta != 0 {
+                        engine.step_brightness(brightness_delta);
+                        self.flash_quick_controls();
+                        brightness_delta = 0;
+                    }
+                    self.handle_action(id, engine);
+                }
+            }
+        }
+        if brightness_delta != 0 {
+            engine.step_brightness(brightness_delta);
+            self.flash_quick_controls();
+        } else if actions
+            .iter()
+            .any(|id| matches!(*id, ID_BRIGHTER | ID_DARKER))
+        {
+            // Opposing inputs can cancel out, but should still refresh feedback.
+            self.flash_quick_controls();
+        }
     }
 
     fn reload(&self, applied_generation: &mut u64) {
@@ -143,6 +199,45 @@ impl HotkeyManager {
             }
         }
         *applied_generation = generation;
+    }
+
+    fn handle_action(&self, id: i32, engine: &FadeEngine) {
+        match id {
+            ID_PAUSE => {
+                engine.toggle_pause();
+            }
+            ID_BRIGHTER => engine.step_brightness(5),
+            ID_DARKER => engine.step_brightness(-5),
+            ID_THEME => {
+                theme::toggle_theme();
+            }
+            ID_DAY_NIGHT => {
+                let state = engine.get_state();
+                engine.jump_to(state.phase == "day" || state.phase == "morning");
+            }
+            ID_BOOST => {
+                gamma::reset_gamma();
+            }
+            _ => return,
+        }
+        eprintln!("[lum][hotkeys] action {id}");
+    }
+
+    fn flash_quick_controls(&self) {
+        let config = self.pending.lock().unwrap().clone();
+        if !config.show_quick_controls {
+            return;
+        }
+        let duration_sec = config.quick_controls_duration_sec.clamp(1, 30);
+        let app = self.app.lock().unwrap().clone();
+        let Some(app) = app else { return };
+        let app_for_main = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(window) = app_for_main.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.emit("hotkey-quick-controls", duration_sec);
+            }
+        });
     }
 }
 
@@ -242,28 +337,6 @@ fn unregister_all() {
             UnregisterHotKey(std::ptr::null_mut(), id);
         }
     }
-}
-
-fn handle_action(id: i32, engine: &FadeEngine) {
-    match id {
-        ID_PAUSE => {
-            engine.toggle_pause();
-        }
-        ID_BRIGHTER => engine.step_brightness(5),
-        ID_DARKER => engine.step_brightness(-5),
-        ID_THEME => {
-            theme::toggle_theme();
-        }
-        ID_DAY_NIGHT => {
-            let state = engine.get_state();
-            engine.jump_to(state.phase == "day" || state.phase == "morning");
-        }
-        ID_BOOST => {
-            gamma::reset_gamma();
-        }
-        _ => return,
-    }
-    eprintln!("[lum][hotkeys] action {id}");
 }
 
 #[cfg(test)]

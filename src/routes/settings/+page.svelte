@@ -17,6 +17,10 @@
     settings.brightness.overlay_night_percent = Math.max(settings.developer.minimum_gamma_percent, settings.brightness.overlay_night_percent);
   }
 
+  function clampQuickControlsDuration() {
+    settings.hotkeys.quick_controls_duration_sec = Math.max(1, Math.min(30, Number(settings.hotkeys.quick_controls_duration_sec) || 3));
+  }
+
   function gammaDisplayPercent(actual) {
     if (actual == null) return "—";
     const floor = Math.max(1, Math.min(100, Number(settings?.developer.minimum_gamma_percent) || 10));
@@ -274,6 +278,11 @@
           </div>
           <p class="hotkey-note">Numpad keys can be used alone. Other shortcuts must include Ctrl, Alt, Shift, or Win. Changes apply immediately after saving.</p>
         </section>
+        <section class="card rows">
+          <div class="card-heading"><div><h2>Brightness feedback</h2><p>Briefly show the quick controls after using Brighter or Darker.</p></div></div>
+          <label class="toggle-row"><span><strong>Flash quick controls</strong><small>Show the current brightness without taking keyboard focus.</small></span><input type="checkbox" bind:checked={settings.hotkeys.show_quick_controls} /></label>
+          <label class="select-row quick-controls-duration" class:disabled={!settings.hotkeys.show_quick_controls}><span><strong>Visible duration</strong><small>How long the panel stays fully visible before fading out.</small></span><div class="number-field"><input type="number" min="1" max="30" step="1" bind:value={settings.hotkeys.quick_controls_duration_sec} onchange={clampQuickControlsDuration} disabled={!settings.hotkeys.show_quick_controls} /><em>seconds</em></div></label>
+        </section>
       {:else if active === "general"}
         <header><p>Settings</p><h1>General</h1><span>Location, Windows integration, and startup behavior.</span></header>
         <section class="card">
@@ -355,6 +364,7 @@
   .location-summary{display:flex;align-items:center;gap:12px}.location-summary>span{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#2b3040;color:#8aaff0;font-size:18px}.location-summary>div{display:grid;gap:4px}.location-summary small{color:#858b98}.map-panel{margin-top:17px}.notice{display:grid;gap:5px;padding:16px;border-radius:12px}.notice.danger{background:#3b2327;color:#ffb5af}.loading{color:#8c929f}.error{color:#ffaaa3}
   .map-credit{margin:14px 0 0;color:#737a88;font-size:12px}.map-credit a{color:#8aaff0;text-decoration:none}.map-credit a:hover{text-decoration:underline}
   .hotkey-list{display:grid}.hotkey-list label{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:13px 0;border-top:1px solid #2e313b}.hotkey-list label:first-child{padding-top:0;border-top:0}.hotkey-list label>span{display:grid;gap:4px}.hotkey-list strong{font-size:12px}.hotkey-list small{color:#858b98;font-size:11px}.hotkey-list input{width:160px;padding:9px 11px;border:1px solid #3a3e49;border-radius:9px;background:#191a21;color:#dce6fa;text-align:center;outline:none;font-size:12px;font-weight:600}.hotkey-list input:focus{border-color:#6c93d2;background:#1d2230;box-shadow:0 0 0 3px rgba(108,147,210,.12)}.hotkey-list input::placeholder{color:#696f7c;font-weight:400}.hotkey-note{margin:15px 0 0;padding-top:14px;border-top:1px solid #2e313b;color:#777d8a;font-size:10.5px}
+  .quick-controls-duration{margin:0;padding-top:17px;border-top:1px solid #2e313b}.quick-controls-duration.disabled{opacity:.5}.quick-controls-duration .number-field{flex:0 0 auto}.quick-controls-duration .number-field input{width:64px;text-align:right}.quick-controls-duration .number-field em{padding-right:10px}
   @media(max-width:820px){.app-shell{grid-template-columns:72px minmax(0,1fr)}aside{padding-inline:9px}.logo strong,nav button:not(.active){font-size:0}.logo{justify-content:center;padding-inline:0}.logo span{font-size:25px}nav button{justify-content:center;padding:11px}nav button span{font-size:17px}.save-state{font-size:0;justify-content:center}.field-grid{grid-template-columns:1fr}.status-hero{grid-template-columns:auto 1fr}.live-values{grid-column:1/-1;padding-left:69px}.select-row{align-items:stretch;flex-direction:column;gap:12px}.select-row select{width:100%}}
   @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>
