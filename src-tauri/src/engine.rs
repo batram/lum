@@ -129,15 +129,25 @@ impl FadeEngine {
     }
 
     pub fn set_automatic(&self, automatic: bool) {
-        let current = self.get_state();
+        let (held_hardware_pct, held_overlay_pct, held_temperature_k) = {
+            let state = self.state.lock().unwrap().clone();
+            (
+                state.hardware_brightness_pct,
+                state.overlay_brightness_pct,
+                state.color_temp_k,
+            )
+        };
         let mut controls = self.controls.lock().unwrap();
         controls.automatic = automatic;
         controls.effects_off = false;
         if !automatic {
-            controls.held_hardware_pct = current.hardware_brightness_pct;
-            controls.held_overlay_pct = current.overlay_brightness_pct;
-            controls.held_temperature_k = current.color_temp_k;
+            controls.held_hardware_pct = held_hardware_pct;
+            controls.held_overlay_pct = held_overlay_pct;
+            controls.held_temperature_k = held_temperature_k;
         }
+        let mut state = self.state.lock().unwrap();
+        state.automatic = automatic;
+        state.effects_off = false;
     }
 
     pub fn set_adjustments(
@@ -215,6 +225,7 @@ impl FadeEngine {
 
     pub fn set_effects_off(&self, effects_off: bool) {
         self.controls.lock().unwrap().effects_off = effects_off;
+        self.state.lock().unwrap().effects_off = effects_off;
         if effects_off {
             let settings = Settings::load();
             gamma::reset_gamma();

@@ -180,15 +180,15 @@
       await invoke("set_automatic", { automatic });
       if (version !== automaticRequestVersion) return;
       syncRevision += 1;
-      pendingAutomatic = null;
       await refresh();
+      if (version === automaticRequestVersion) pendingAutomatic = null;
     } catch (reason) {
       if (version !== automaticRequestVersion) return;
       syncRevision += 1;
-      pendingAutomatic = null;
       state = { ...state, automatic: previous };
       error = `Could not change automatic mode: ${reason}`;
       refresh();
+      if (version === automaticRequestVersion) pendingAutomatic = null;
     }
   }
 
@@ -215,18 +215,18 @@
         invoke("reset_temporary_adjustments"),
         invoke("set_automatic", { automatic: true }),
       ]);
-      syncRevision += 1;
       if (adjustmentVersion === requestVersion) pendingAdjustment = null;
-      if (automaticVersion === automaticRequestVersion) pendingAutomatic = null;
+      if (automaticVersion === automaticRequestVersion) syncRevision += 1;
       await refresh();
     } catch (reason) {
       syncRevision += 1;
       resetSettling = false;
       resetZeroReads = 0;
       if (adjustmentVersion === requestVersion) pendingAdjustment = null;
-      if (automaticVersion === automaticRequestVersion) pendingAutomatic = null;
       error = `Could not return to the schedule: ${reason}`;
       refresh();
+    } finally {
+      if (automaticVersion === automaticRequestVersion) pendingAutomatic = null;
     }
   }
 
