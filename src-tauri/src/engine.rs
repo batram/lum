@@ -11,7 +11,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 struct RuntimeControls {
@@ -326,10 +326,25 @@ impl FadeEngine {
         thread::spawn(move || {
             let mut last_theme_dark = None;
             let mut last_disabled_displays: Vec<String> = Vec::new();
+            // Logical display names can return to the same set between ticks while
+            // Windows has replaced the underlying DDC/CI physical handles.
+            let mut last_monitor_refresh = Instant::now();
             while !engine.stop.load(Ordering::Relaxed) {
                 let settings = Settings::load();
-                let display_inventory_changed =
-                    ddcci::refresh_monitors_if_needed(&gamma::get_display_names());
+                let display_names = gamma::get_display_names();
+                let display_inventory_changed = if last_monitor_refresh.elapsed()
+                    >= Duration::from_secs(30)
+                {
+                    ddcci::enumerate_monitors(&display_names);
+                    last_monitor_refresh = Instant::now();
+                    true
+                } else {
+                    let changed = ddcci::refresh_monitors_if_needed(&display_names);
+                    if changed {
+                        last_monitor_refresh = Instant::now();
+                    }
+                    changed
+                };
                 if display_inventory_changed && !settings.disabled_displays.is_empty() {
                     ddcci::set_brightness_for_displays(
                         settings.brightness.hardware_day_percent,

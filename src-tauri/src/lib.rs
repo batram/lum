@@ -146,9 +146,7 @@ fn get_foreground_app() -> Option<String> {
 }
 
 /// Tauri command: get list of monitors with DDC/CI capabilities.
-#[tauri::command]
-fn get_monitors() -> Vec<serde_json::Value> {
-    let physical = ddcci::get_monitors();
+fn build_monitor_list(physical: &[ddcci::MonitorInfo]) -> Vec<serde_json::Value> {
     gamma::get_display_names()
         .into_iter()
         .enumerate()
@@ -171,6 +169,19 @@ fn get_monitors() -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+#[tauri::command]
+fn get_monitors() -> Vec<serde_json::Value> {
+    let physical = ddcci::get_monitors();
+    build_monitor_list(&physical)
+}
+
+/// Tauri command: force a monitor re-enumeration and return updated capabilities.
+#[tauri::command]
+fn refresh_monitors() -> Vec<serde_json::Value> {
+    let physical = ddcci::enumerate_monitors(&gamma::get_display_names());
+    build_monitor_list(&physical)
 }
 
 /// Tauri command: get full settings as JSON.
@@ -235,6 +246,7 @@ pub fn run() {
             get_autostart,
             get_foreground_app,
             get_monitors,
+            refresh_monitors,
             get_settings,
             save_settings,
         ])

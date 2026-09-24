@@ -56,6 +56,7 @@
   let state = $state(null);
   let monitors = $state([]);
   let autostart = $state(false);
+  let isRefreshingMonitors = $state(false);
   let saveStatus = $state("Loading…");
   let loadError = $state("");
   let appError = $state("");
@@ -189,6 +190,20 @@
       ? settings.disabled_displays.filter((name) => name !== deviceName)
       : [...new Set([...settings.disabled_displays, deviceName])];
   }
+  async function refreshDisplayList() {
+    if (isRefreshingMonitors) return;
+    isRefreshingMonitors = true;
+    try {
+      monitors = await invoke("refresh_monitors");
+    } catch {
+      try {
+        monitors = await invoke("get_monitors");
+      } catch {
+      }
+    } finally {
+      isRefreshingMonitors = false;
+    }
+  }
   function phaseName(value) { return value ? value[0].toUpperCase() + value.slice(1) : "Current"; }
   let needsAttention = $derived(settings && (Math.abs(settings.location.latitude - 40.7128) < .0001 && Math.abs(settings.location.longitude + 74.006) < .0001));
 </script>
@@ -235,7 +250,12 @@
         <header><p>Settings</p><h1>Schedule</h1><span>Shape how your displays change through the day.</span></header>
         <Curves {settings} {monitors} />
         <section class="card rows">
-          <div class="card-heading"><div><h2>Displays</h2><p>Choose which displays Lum may adjust.</p></div></div>
+          <div class="card-heading">
+            <div><h2>Displays</h2><p>Choose which displays Lum may adjust.</p></div>
+            <button class="secondary" type="button" onclick={refreshDisplayList} disabled={isRefreshingMonitors}>
+              {isRefreshingMonitors ? "Refreshing..." : "Refresh displays"}
+            </button>
+          </div>
           {#each monitors as monitor}
             <label class="toggle-row"><span><strong>{monitor.description || monitor.device_name}</strong><small>{monitor.supports_brightness ? "Color, overlay, and hardware brightness effects" : "Color and overlay effects"} · {monitor.device_name}</small></span><input type="checkbox" checked={displayEffectsEnabled(monitor.device_name)} onchange={(event) => setDisplayEffectsEnabled(monitor.device_name, event.currentTarget.checked)} /></label>
           {:else}

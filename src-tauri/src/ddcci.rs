@@ -239,6 +239,30 @@ pub fn enumerate_monitors(active_display_names: &[String]) -> Vec<MonitorInfo> {
         // for later SetMonitorBrightness calls. They'll be destroyed on app exit.
     }
 
+    let (had_cached_monitors, cached_infos) = {
+        let cached = MONITORS.lock().unwrap();
+        let cached_infos = cached
+            .as_ref()
+            .map(|cached_monitors| {
+                cached_monitors
+                    .iter()
+                    .map(|cached| cached.info.clone())
+                    .collect::<Vec<_>>()
+            });
+        (cached.is_some(), cached_infos)
+    };
+
+    if infos.is_empty() {
+        if had_cached_monitors {
+            if let Some(cached_infos) = cached_infos {
+                eprintln!("[lum] DDC/CI: enumeration returned no monitors; preserving {} cached monitor(s)", cached_infos.len());
+                return cached_infos;
+            }
+        }
+        return Vec::new();
+    }
+
+    cleanup();
     *MONITORS.lock().unwrap() = Some(monitor_handles);
     *ACTIVE_DISPLAY_NAMES.lock().unwrap() = normalized_display_names(active_display_names);
 
@@ -258,9 +282,17 @@ pub fn refresh_monitors_if_needed(active_display_names: &[String]) -> bool {
         return false;
     }
 
-    cleanup();
-    enumerate_monitors(active_display_names);
-    true
+    let had_cached_monitors = MONITORS.lock().unwrap().is_some();
+    let discovered = enumerate_monitors(active_display_names);
+
+    // Keep the existing cache if the system briefly reports an empty set during
+    // display topology churn; the next tick will retry with the previous
+    // device names still in cache.
+    if discovered.is_empty() && had_cached_monitors {
+        return false;
+    }
+
+    !discovered.is_empty() || !had_cached_monitors
 }
 
 /// Get cached monitor info (call enumerate_monitors first).
