@@ -621,12 +621,11 @@ fn at_minute(now: NaiveDateTime, minute: u16) -> NaiveDateTime {
 }
 
 fn effective_sun(settings: &Settings, date: chrono::NaiveDate) -> sun::SunTimes {
-    let offset = Local::now().offset().local_minus_utc() as f64 / 3600.0;
     let mut value = sun::calculate_sun_times(
         date,
         settings.location.latitude,
         settings.location.longitude,
-        offset,
+        sun::local_offset_hours(date),
     );
     if settings.fade.use_civil_twilight {
         value.sunrise = value.civil_dawn;

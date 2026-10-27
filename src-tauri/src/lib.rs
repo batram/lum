@@ -149,6 +149,33 @@ fn jump_to_night(engine: State<'_, Arc<FadeEngine>>, night: bool) {
     engine.jump_to(night);
 }
 
+/// One-line tray tooltip summarising what Lum is currently doing.
+fn tray_tooltip(state: &engine::EngineState) -> String {
+    if state.next_transition_time == "--:--" {
+        return "Lum — starting...".into();
+    }
+    let status = if state.effects_off {
+        "effects off".to_string()
+    } else if state.app_bypassed {
+        "paused for app".to_string()
+    } else {
+        let mut phase = state.phase.clone();
+        if let Some(first) = phase.get_mut(..1) {
+            first.make_ascii_uppercase();
+        }
+        format!(
+            "{phase}{} · {}% · {}K",
+            if state.automatic { "" } else { " (manual)" },
+            state.hardware_brightness_pct,
+            state.color_temp_k
+        )
+    };
+    format!(
+        "Lum — {status}\n{} at {}",
+        state.next_transition_label, state.next_transition_time
+    )
+}
+
 /// Tauri command: get today's sun times.
 #[tauri::command]
 fn get_sun_times(latitude: f64, longitude: f64) -> serde_json::Value {
@@ -527,6 +554,21 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Mirror the engine state into the tray tooltip, touching it only on change.
+            let engine_for_tooltip = fade_engine.clone();
+            let tray_for_tooltip = _tray.clone();
+            thread::spawn(move || {
+                let mut last_tooltip = String::new();
+                loop {
+                    let tooltip = tray_tooltip(&engine_for_tooltip.get_state());
+                    if tooltip != last_tooltip {
+                        let _ = tray_for_tooltip.set_tooltip(Some(&tooltip));
+                        last_tooltip = tooltip;
+                    }
+                    thread::sleep(Duration::from_secs(2));
+                }
+            });
 
             Ok(())
         })

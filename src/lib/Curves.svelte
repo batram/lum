@@ -62,7 +62,8 @@
     const [hour, minute] = value.split(":").map(Number);
     return hour * 60 + minute;
   }
-  function localDateKey(value) { return `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}`; }
+  // Includes the UTC offset so a DST switch or time zone change refetches sun times.
+  function localDateKey(value) { return `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}@${value.getTimezoneOffset()}`; }
   function wrapMinute(value) { return ((Math.round(value) % 1440) + 1440) % 1440; }
   function xForMinute(minute) { return PAD.left + ((minute >= 1440 ? 1440 : wrapMinute(minute)) / 1440) * PLOT_W; }
   function minuteForX(x) { return wrapMinute(((x - PAD.left) / PLOT_W) * 1440); }

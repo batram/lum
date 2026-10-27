@@ -1,7 +1,7 @@
 //! Solar position calculations using the NOAA algorithm.
 //! Computes sunrise/sunset times from latitude/longitude without network access.
 
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 
 /// Result of a sun calculation for a given date.
 #[derive(Debug, Clone)]
@@ -45,10 +45,20 @@ pub fn calculate_sun_times(
 
 /// Calculate sun times for today using the system's local timezone offset.
 pub fn calculate_today(latitude: f64, longitude: f64) -> SunTimes {
-    let now = Local::now();
-    let date = now.date_naive();
-    let offset = now.offset().local_minus_utc() as f64 / 3600.0;
-    calculate_sun_times(date, latitude, longitude, offset)
+    let date = Local::now().date_naive();
+    calculate_sun_times(date, latitude, longitude, local_offset_hours(date))
+}
+
+/// Local UTC offset in effect on `date`, sampled at noon so a DST switch in the
+/// early hours resolves to the offset that applies to sunrise and sunset.
+pub fn local_offset_hours(date: NaiveDate) -> f64 {
+    let noon = NaiveDateTime::new(date, NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+    let offset = Local
+        .from_local_datetime(&noon)
+        .earliest()
+        .map(|value| value.offset().local_minus_utc())
+        .unwrap_or_else(|| Local::now().offset().local_minus_utc());
+    offset as f64 / 3600.0
 }
 
 /// Core NOAA calculation for a sun event (rise or set) at a given zenith angle.
@@ -138,6 +148,7 @@ fn calc_sun_event(
 /// Determine the current phase and transition progress (0.0 = full day, 1.0 = full night).
 ///
 /// Returns `(intensity, phase_name)` where intensity drives the color/brightness curves.
+/// Fades follow a smoothstep ease, matching the schedule chart in `Curves.svelte`.
 pub fn current_intensity(
     sun: &SunTimes,
     now: NaiveDateTime,
@@ -145,7 +156,7 @@ pub fn current_intensity(
     evening_offset_min: i32,
     morning_offset_min: i32,
 ) -> (f64, &'static str) {
-    let fade_dur = Duration::minutes(fade_duration_min as i64);
+    let fade_dur = Duration::minutes(fade_duration_min.max(5) as i64);
     let evening_offset = Duration::minutes(evening_offset_min as i64);
     let morning_offset = Duration::minutes(morning_offset_min as i64);
 
@@ -165,18 +176,22 @@ pub fn current_intensity(
         // Evening fade: 0 → 1
         let elapsed = (now - evening_start).num_seconds() as f64;
         let total = fade_dur.num_seconds() as f64;
-        let progress = (elapsed / total).clamp(0.0, 1.0);
+        let progress = smoothstep((elapsed / total).clamp(0.0, 1.0));
         (progress, "evening")
     } else if now >= morning_start && now < morning_end {
         // Morning fade: 1 → 0
         let elapsed = (now - morning_start).num_seconds() as f64;
         let total = fade_dur.num_seconds() as f64;
-        let progress = (elapsed / total).clamp(0.0, 1.0);
+        let progress = smoothstep((elapsed / total).clamp(0.0, 1.0));
         (1.0 - progress, "morning")
     } else {
         // Full day (between morning_end and evening_start)
         (0.0, "day")
     }
+}
+
+fn smoothstep(t: f64) -> f64 {
+    t * t * (3.0 - 2.0 * t)
 }
 
 // --- Trig helpers (input in degrees) ---
@@ -250,5 +265,27 @@ mod tests {
         let (intensity, phase) = current_intensity(&sun, midnight, 60, 0, 0);
         assert_eq!(phase, "night");
         assert!((intensity - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_fades_ease_like_schedule_chart() {
+        let date = NaiveDate::from_ymd_opt(2026, 6, 21).unwrap();
+        let sun = SunTimes {
+            sunrise: NaiveDateTime::new(date, NaiveTime::from_hms_opt(6, 0, 0).unwrap()),
+            sunset: NaiveDateTime::new(date, NaiveTime::from_hms_opt(20, 0, 0).unwrap()),
+            civil_dawn: NaiveDateTime::new(date, NaiveTime::from_hms_opt(5, 30, 0).unwrap()),
+            civil_dusk: NaiveDateTime::new(date, NaiveTime::from_hms_opt(20, 30, 0).unwrap()),
+        };
+
+        // A quarter into the evening fade, smoothstep gives 0.15625 (linear would be 0.25).
+        let evening = NaiveDateTime::new(date, NaiveTime::from_hms_opt(19, 15, 0).unwrap());
+        let (intensity, phase) = current_intensity(&sun, evening, 60, 0, 0);
+        assert_eq!(phase, "evening");
+        assert!((intensity - 0.15625).abs() < 1e-9);
+
+        let morning = NaiveDateTime::new(date, NaiveTime::from_hms_opt(5, 15, 0).unwrap());
+        let (intensity, phase) = current_intensity(&sun, morning, 60, 0, 0);
+        assert_eq!(phase, "morning");
+        assert!((intensity - 0.84375).abs() < 1e-9);
     }
 }
