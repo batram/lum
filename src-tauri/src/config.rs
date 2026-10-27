@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -29,6 +30,11 @@ pub struct Settings {
     /// Windows display device names that Lum must leave untouched.
     #[serde(default)]
     pub disabled_displays: Vec<String>,
+
+    /// Per-display hardware brightness trims, in percentage points relative to
+    /// the scheduled/adjusted monitor brightness. Keyed by Windows device name.
+    #[serde(default)]
+    pub display_brightness_offsets: BTreeMap<String, i16>,
 
     /// Dark/light theme switching.
     pub theme: ThemeConfig,
@@ -285,6 +291,7 @@ impl Default for Settings {
                 overlay_night_percent: 100,
             },
             disabled_displays: Vec::new(),
+            display_brightness_offsets: BTreeMap::new(),
             theme: ThemeConfig {
                 auto_switch: true,
                 dark_offset_min: 0,

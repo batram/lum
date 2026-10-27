@@ -12,7 +12,11 @@
     automatic: true, effects_off: false, app_bypassed: false,
     hardware_offset_pct: 0, overlay_offset_pct: 0, temperature_offset_k: 0,
     adjustment_expires_at: null,
+    display_brightness_offsets: {},
   };
+  const PANEL_BASE_HEIGHT = 320;
+  // .controls gap (10px) minus the display list's -4px top margin.
+  const CONTROLS_GAP = 6;
 
   let state = $state({ ...emptyState });
   let hardwareBrightness = $state(100);
@@ -34,6 +38,13 @@
   let hotkeyFlashActive = $state(false);
   let hotkeyFadeTimer;
   let hotkeyHideTimer;
+  let displays = $state([]);
+  let displayOffsets = $state({});
+  let displaysExpanded = $state(false);
+  let displayListHeight = $state(0);
+  let trimTimer;
+  let trimBusy = null;
+  let panelHeight = PANEL_BASE_HEIGHT;
 
   function gammaDisplayPercent(actual, floor = state.minimum_gamma_percent) {
     if (floor >= 100) return 0;
@@ -69,11 +80,23 @@
       if (disposed) unlisten();
       else unlistenHotkey = unlisten;
     });
+    let unlistenSettings;
+    listen("settings-saved", () => { if (!disposed) loadDisplays(); }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenSettings = unlisten;
+    });
     refresh();
-    const interval = setInterval(refresh, 1000);
+    loadDisplays();
+    let ticks = 0;
+    const interval = setInterval(() => {
+      refresh();
+      if (++ticks % 5 === 0) loadDisplays();
+    }, 1000);
     return () => {
       disposed = true;
       unlistenHotkey?.();
+      unlistenSettings?.();
+      clearTimeout(trimTimer);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerup", finishInteraction);
       window.removeEventListener("pointercancel", finishInteraction);
@@ -111,6 +134,7 @@
         overlayBrightness = gammaDisplayPercent(next.overlay_brightness_pct, next.minimum_gamma_percent);
         temperature = next.color_temp_k;
       }
+      if (!trimBusy) displayOffsets = { ...next.display_brightness_offsets };
       loaded = true;
       error = "";
     } catch (reason) {
@@ -273,6 +297,62 @@
     }
   }
 
+  async function loadDisplays() {
+    try {
+      const [monitors, settings] = await Promise.all([invoke("get_monitors"), invoke("get_settings")]);
+      const disabled = settings.disabled_displays.map((name) => name.toLowerCase());
+      const next = monitors.filter((monitor) => monitor.supports_brightness && !disabled.includes(monitor.device_name.toLowerCase()));
+      if (JSON.stringify(next) !== JSON.stringify(displays)) displays = next;
+      if (displays.length < 2) displaysExpanded = false;
+    } catch {
+      // Display inventory is optional here; the next interval retries.
+    }
+  }
+
+  function offsetFor(deviceName) {
+    const key = Object.keys(displayOffsets).find((name) => name.toLowerCase() === deviceName.toLowerCase());
+    return key ? displayOffsets[key] : 0;
+  }
+
+  function displayBrightness(deviceName) {
+    return Math.max(0, Math.min(100, Number(hardwareBrightness) + offsetFor(deviceName)));
+  }
+
+  function shortDeviceName(deviceName) {
+    return deviceName.replace(/^\\\\\.\\/, "");
+  }
+
+  // Each display stores a trim relative to the shared Monitor slider, so the
+  // schedule keeps fading all of them while their balance stays the same.
+  function setDisplayOffset(deviceName, offset, persist) {
+    const offsetPct = Math.max(-100, Math.min(100, Math.round(offset)));
+    const others = Object.entries(displayOffsets).filter(([name]) => name.toLowerCase() !== deviceName.toLowerCase());
+    displayOffsets = Object.fromEntries(offsetPct === 0 ? others : [...others, [deviceName, offsetPct]]);
+    const busy = (trimBusy = {});
+    clearTimeout(trimTimer);
+    const send = () => invoke("set_display_brightness_offset", { deviceName, offsetPct, persist })
+      .catch((reason) => { error = `Could not set display brightness: ${reason}`; })
+      .finally(() => { if (trimBusy === busy) trimBusy = null; });
+    if (persist) send();
+    else trimTimer = setTimeout(send, 60);
+  }
+
+  function trimInput(deviceName, event, persist) {
+    setDisplayOffset(deviceName, Number(event.currentTarget.value) - Number(hardwareBrightness), persist);
+  }
+
+  function formatOffset(offset) {
+    return offset > 0 ? `+${offset}` : `${offset}`;
+  }
+
+  $effect(() => {
+    const height = displaysExpanded ? PANEL_BASE_HEIGHT + displayListHeight + CONTROLS_GAP : PANEL_BASE_HEIGHT;
+    if (displaysExpanded && !displayListHeight) return;
+    if (height === panelHeight) return;
+    panelHeight = height;
+    invoke("set_quick_panel_height", { height }).catch((reason) => { error = `Could not resize the panel: ${reason}`; });
+  });
+
   async function openSettings() {
     await invoke("open_settings_window");
   }
@@ -309,10 +389,40 @@
   </section>
 
   <section class="controls" aria-label="Temporary display adjustments">
-    <label>
-      <span class="label-row"><span>Monitor</span><output>{hardwareBrightness}%</output></span>
+    <div class="control">
+      <span class="label-row">
+        <span class="label-with-toggle">
+          <span>Monitor</span>
+          {#if displays.length > 1}
+            <button type="button" class="displays-toggle" class:open={displaysExpanded} aria-expanded={displaysExpanded} aria-controls="display-list" title={displaysExpanded ? "Hide per-display brightness" : "Adjust each display"} onclick={() => { displaysExpanded = !displaysExpanded; }}>
+              {displays.length} displays<i aria-hidden="true">›</i>
+            </button>
+          {/if}
+        </span>
+        <output>{hardwareBrightness}%</output>
+      </span>
       <input style={`--value:${hardwareBrightness}%`} aria-label="Temporary monitor brightness" type="range" min="0" max="100" step="1" bind:value={hardwareBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off || persisting} />
-    </label>
+    </div>
+    {#if displaysExpanded}
+      <div id="display-list" class="display-list" role="group" aria-label="Per-display brightness" bind:offsetHeight={displayListHeight}>
+        {#each displays as display (display.device_name)}
+          {@const offset = offsetFor(display.device_name)}
+          {@const value = displayBrightness(display.device_name)}
+          <div class="display-row">
+            <span class="label-row">
+              <span class="display-name" title={`${display.description} · ${display.device_name}`}>{display.description}<small>{shortDeviceName(display.device_name)}</small></span>
+              <span class="display-value">
+                {#if offset !== 0}
+                  <button type="button" class="trim-chip" title="Match the Monitor slider again" aria-label={`Clear ${formatOffset(offset)} trim for ${display.description}`} onclick={() => setDisplayOffset(display.device_name, 0, true)}>{formatOffset(offset)}</button>
+                {/if}
+                <output>{value}%</output>
+              </span>
+            </span>
+            <input style={`--value:${value}%`} class="trim" aria-label={`Brightness for ${display.description} (${shortDeviceName(display.device_name)})`} type="range" min="0" max="100" step="1" {value} oninput={(event) => trimInput(display.device_name, event, false)} onchange={(event) => trimInput(display.device_name, event, true)} disabled={!loaded || state.effects_off || persisting} />
+          </div>
+        {/each}
+      </div>
+    {/if}
     <label>
       <span class="label-row"><span>Gamma</span><output>{overlayBrightness}%</output></span>
       <input style={`--value:${overlayBrightness}%`} class="overlay" aria-label="Temporary gamma brightness" type="range" min="0" max="100" step="1" bind:value={overlayBrightness} onpointerdown={() => { interacting = true; }} oninput={queueAdjustment} disabled={!loaded || state.effects_off || persisting} />
@@ -370,7 +480,24 @@
   .hero-copy{min-width:0;flex:1}
   .hero p{overflow:hidden;margin:0;color:#9da3b1;font-size:10px;line-height:1.2;text-overflow:ellipsis;white-space:nowrap}
   .controls{display:grid;gap:10px;padding:7px 1px 6px}
-  .controls label{display:grid;gap:4px}
+  .controls label,.controls .control{display:grid;gap:4px}
+  .label-with-toggle{display:flex;align-items:baseline;gap:7px}
+  .displays-toggle{display:inline-flex;align-items:center;gap:4px;padding:1px 6px 1px 7px;border-radius:9px;background:rgba(121,168,255,.1);color:#9fb8e6;font-size:9.5px;line-height:1.5}
+  .displays-toggle i{display:inline-block;font-size:11px;font-style:normal;line-height:1;transform:rotate(90deg);transition:transform .16s ease}
+  .displays-toggle.open i{transform:rotate(-90deg)}
+  .displays-toggle:hover,.displays-toggle:focus-visible{background:rgba(121,168,255,.18);color:#d5e3ff;outline:none}
+  .display-list{display:grid;gap:6px;margin-top:-4px;padding:7px 9px 4px 11px;border-left:2px solid rgba(121,168,255,.28);border-radius:0 9px 9px 0;background:rgba(255,255,255,.03);animation:reveal .16s ease-out}
+  .display-row{display:grid;gap:2px}
+  .display-row .label-row{font-size:10.5px}
+  .display-name{display:flex;align-items:baseline;gap:5px;min-width:0;overflow:hidden;color:#c3c7d2;white-space:nowrap;text-overflow:ellipsis}
+  .display-name small{color:#7d8392;font-size:9px}
+  .display-value{display:flex;align-items:baseline;gap:6px;flex:0 0 auto}
+  .display-row output{font-size:10.5px}
+  .trim-chip{padding:0 5px;border-radius:6px;background:rgba(255,255,255,.07);color:#aab0bd;font-size:9px;font-variant-numeric:tabular-nums;line-height:1.5}
+  .trim-chip:hover,.trim-chip:focus-visible{background:rgba(255,120,112,.16);color:#ffc2bc;outline:none}
+  input[type="range"].trim{--slider-color:#8fb3f5;height:30px;margin:-6px 0}
+  input[type="range"].trim::-webkit-slider-thumb{width:20px;height:30px;margin-top:-12.5px;border-width:5px 4px}
+  @keyframes reveal{from{opacity:0;transform:translateY(-3px)}}
   .label-row{display:flex;justify-content:space-between;align-items:baseline;padding:0 1px;color:#d7d9e0;font-size:11.5px}
   output{color:#fff;font-size:11.5px;font-weight:650;font-variant-numeric:tabular-nums}
   input[type="range"]{--slider-color:#79a8ff;width:100%;height:36px;margin:-7px 0;appearance:none;background:transparent;cursor:pointer}

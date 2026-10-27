@@ -17,8 +17,13 @@ use std::time::{Duration, Instant};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, PhysicalPosition, Position, State,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Position, State,
 };
+
+// Quick panel bounds in logical pixels; the base size matches tauri.conf.json.
+const QUICK_PANEL_WIDTH: f64 = 352.0;
+const QUICK_PANEL_MIN_HEIGHT: f64 = 320.0;
+const QUICK_PANEL_MAX_HEIGHT: f64 = 640.0;
 
 #[link(name = "user32")]
 extern "system" {
@@ -53,6 +58,54 @@ fn set_temporary_adjustments(
 #[tauri::command]
 fn reset_temporary_adjustments(engine: State<'_, Arc<FadeEngine>>) {
     engine.reset_adjustments();
+}
+
+/// Set one display's brightness trim. Slider drags apply it live; `persist`
+/// (sent on release) also writes it to settings and notifies the settings window.
+#[tauri::command]
+fn set_display_brightness_offset(
+    app: AppHandle,
+    engine: State<'_, Arc<FadeEngine>>,
+    device_name: String,
+    offset_pct: i16,
+    persist: bool,
+) {
+    engine.set_display_offset(&device_name, offset_pct);
+    if persist {
+        let mut settings = config::Settings::load();
+        settings.display_brightness_offsets = engine.display_offsets();
+        settings.save();
+        let _ = app.emit("settings-saved", &settings);
+    }
+}
+
+/// Resize the quick panel to a logical height, keeping its bottom edge (next to
+/// the tray) where it is so the panel grows upward.
+#[tauri::command]
+fn set_quick_panel_height(app: AppHandle, height: f64) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Quick panel window is missing")?;
+    let height = height.clamp(QUICK_PANEL_MIN_HEIGHT, QUICK_PANEL_MAX_HEIGHT);
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let old_size = window.outer_size().map_err(|e| e.to_string())?;
+    let position = window.outer_position().map_err(|e| e.to_string())?;
+    let new_size = LogicalSize::new(QUICK_PANEL_WIDTH, height);
+    let new_physical_height = (height * scale).round() as i32;
+    if new_physical_height == old_size.height as i32 {
+        return Ok(());
+    }
+    window
+        .set_min_size(None::<LogicalSize<f64>>)
+        .and_then(|_| window.set_max_size(None::<LogicalSize<f64>>))
+        .and_then(|_| window.set_size(new_size))
+        .and_then(|_| window.set_min_size(Some(new_size)))
+        .and_then(|_| window.set_max_size(Some(new_size)))
+        .map_err(|e| e.to_string())?;
+    let y = position.y + old_size.height as i32 - new_physical_height;
+    window
+        .set_position(Position::Physical(PhysicalPosition::new(position.x, y)))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -194,6 +247,7 @@ fn get_settings() -> config::Settings {
 #[tauri::command]
 fn save_settings(
     mut settings: config::Settings,
+    engine: State<'_, Arc<FadeEngine>>,
     hotkey_manager: State<'_, Arc<hotkeys::HotkeyManager>>,
 ) -> Result<bool, String> {
     hotkeys::validate_config(&settings.hotkeys)?;
@@ -205,7 +259,14 @@ fn save_settings(
         settings.brightness.overlay_night_percent.max(gamma_floor);
     settings.hotkeys.quick_controls_duration_sec =
         settings.hotkeys.quick_controls_duration_sec.clamp(1, 30);
+    settings
+        .display_brightness_offsets
+        .retain(|_, offset| *offset != 0);
+    for offset in settings.display_brightness_offsets.values_mut() {
+        *offset = (*offset).clamp(-100, 100);
+    }
     settings.save();
+    engine.set_display_offsets(settings.display_brightness_offsets.clone());
     hotkey_manager.update(settings.hotkeys.clone());
     Ok(true)
 }
@@ -232,6 +293,8 @@ pub fn run() {
             set_automatic,
             set_temporary_adjustments,
             reset_temporary_adjustments,
+            set_display_brightness_offset,
+            set_quick_panel_height,
             set_schedule_preview,
             set_effects_off,
             hide_quick_panel,

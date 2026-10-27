@@ -8,6 +8,7 @@ use crate::gamma::{self, GammaRamps};
 use crate::{sun, theme};
 use chrono::{Duration as ChronoDuration, Local, NaiveDateTime, NaiveTime, Timelike};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -25,6 +26,7 @@ struct RuntimeControls {
     held_overlay_pct: u8,
     held_temperature_k: u32,
     preview_minute: Option<u16>,
+    display_offsets: BTreeMap<String, i16>,
 }
 
 impl Default for RuntimeControls {
@@ -40,6 +42,7 @@ impl Default for RuntimeControls {
             held_overlay_pct: 100,
             held_temperature_k: 6500,
             preview_minute: None,
+            display_offsets: BTreeMap::new(),
         }
     }
 }
@@ -78,6 +81,7 @@ pub struct EngineState {
     pub adjustment_expires_at: Option<String>,
     pub preview_minute: Option<u16>,
     pub preview_theme_dark: Option<bool>,
+    pub display_brightness_offsets: BTreeMap<String, i16>,
 }
 
 impl Default for EngineState {
@@ -105,6 +109,7 @@ impl Default for EngineState {
             adjustment_expires_at: None,
             preview_minute: None,
             preview_theme_dark: None,
+            display_brightness_offsets: BTreeMap::new(),
         }
     }
 }
@@ -117,15 +122,64 @@ pub struct FadeEngine {
 
 impl FadeEngine {
     pub fn new() -> Arc<Self> {
+        let display_offsets = Settings::load().display_brightness_offsets;
         Arc::new(Self {
-            state: Mutex::new(EngineState::default()),
-            controls: Mutex::new(RuntimeControls::default()),
+            state: Mutex::new(EngineState {
+                display_brightness_offsets: display_offsets.clone(),
+                ..EngineState::default()
+            }),
+            controls: Mutex::new(RuntimeControls {
+                display_offsets,
+                ..RuntimeControls::default()
+            }),
             stop: AtomicBool::new(false),
         })
     }
 
     pub fn get_state(&self) -> EngineState {
         self.state.lock().unwrap().clone()
+    }
+
+    pub fn display_offsets(&self) -> BTreeMap<String, i16> {
+        self.controls.lock().unwrap().display_offsets.clone()
+    }
+
+    /// Replace every per-display trim, e.g. after the settings window saves.
+    pub fn set_display_offsets(&self, offsets: BTreeMap<String, i16>) {
+        self.controls.lock().unwrap().display_offsets = offsets.clone();
+        self.state.lock().unwrap().display_brightness_offsets = offsets;
+    }
+
+    /// Change one display's trim and apply it to the hardware right away.
+    /// Gamma is untouched, so this stays cheap enough for slider drags.
+    pub fn set_display_offset(&self, device_name: &str, offset_pct: i16) {
+        let offset_pct = offset_pct.clamp(-100, 100);
+        let controls = {
+            let mut controls = self.controls.lock().unwrap();
+            controls
+                .display_offsets
+                .retain(|name, _| !name.eq_ignore_ascii_case(device_name));
+            if offset_pct != 0 {
+                controls
+                    .display_offsets
+                    .insert(device_name.to_string(), offset_pct);
+            }
+            controls.clone()
+        };
+        let (hardware, app_bypassed) = {
+            let mut state = self.state.lock().unwrap();
+            state.display_brightness_offsets = controls.display_offsets.clone();
+            (state.hardware_brightness_pct, state.app_bypassed)
+        };
+        if controls.effects_off || app_bypassed || controls.preview_minute.is_some() {
+            return;
+        }
+        let settings = Settings::load();
+        ddcci::set_trimmed_brightness_except(
+            hardware,
+            &controls.display_offsets,
+            &settings.disabled_displays,
+        );
     }
 
     pub fn set_automatic(&self, automatic: bool) {
@@ -192,7 +246,13 @@ impl FadeEngine {
         let temperature = (current.scheduled_color_temp_k as i32 + temperature_offset_k)
             .clamp(1800, 10000) as u32;
         let settings = Settings::load();
-        apply_values(temperature, hardware, overlay, &settings.disabled_displays);
+        apply_values(
+            temperature,
+            hardware,
+            overlay,
+            &settings.disabled_displays,
+            &self.display_offsets(),
+        );
         let mut state = self.state.lock().unwrap();
         state.automatic = true;
         state.effects_off = false;
@@ -246,6 +306,7 @@ impl FadeEngine {
                 values.hardware_pct,
                 values.overlay_pct,
                 &settings.disabled_displays,
+                &self.display_offsets(),
             );
             let mut state = self.state.lock().unwrap();
             state.preview_minute = Some(minute.min(1439));
@@ -268,7 +329,13 @@ impl FadeEngine {
             &controls,
             settings.developer.gamma_floor_percent(),
         );
-        apply_values(temperature, hardware, overlay, &settings.disabled_displays);
+        apply_values(
+            temperature,
+            hardware,
+            overlay,
+            &settings.disabled_displays,
+            &controls.display_offsets,
+        );
         let mut state = self.state.lock().unwrap();
         state.preview_minute = None;
         state.preview_theme_dark = None;
@@ -410,6 +477,7 @@ impl FadeEngine {
                         hardware,
                         overlay,
                         &settings.disabled_displays,
+                        &controls.display_offsets,
                     );
                 }
 
@@ -447,6 +515,7 @@ impl FadeEngine {
                 state.temperature_offset_k = controls.temperature_offset_k;
                 state.adjustment_expires_at = controls.offset_expires_at.map(clock);
                 state.preview_minute = controls.preview_minute;
+                state.display_brightness_offsets = controls.display_offsets.clone();
                 state.preview_theme_dark = controls
                     .preview_minute
                     .map(|_| theme_should_be_dark(&settings, render_now));
@@ -490,9 +559,10 @@ fn apply_values(
     hardware_pct: u8,
     overlay_pct: u8,
     disabled_displays: &[String],
+    display_offsets: &BTreeMap<String, i16>,
 ) -> bool {
     let rgb = kelvin_to_rgb(color_temp);
-    ddcci::set_brightness_except(hardware_pct, disabled_displays);
+    ddcci::set_trimmed_brightness_except(hardware_pct, display_offsets, disabled_displays);
     let ramps = GammaRamps::from_color_and_brightness(&rgb, overlay_pct as f64 / 100.0);
     gamma::set_gamma_ramp_except(&ramps, disabled_displays)
 }

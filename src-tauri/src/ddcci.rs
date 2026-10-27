@@ -2,6 +2,7 @@
 //! Enumerates physical monitors and provides get/set for brightness (VCP 0x10)
 //! and contrast (VCP 0x12).
 
+use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::sync::Mutex;
 
@@ -313,7 +314,26 @@ pub fn set_all_brightness(percent: u8) -> bool {
 
 /// Set brightness on DDC/CI displays except the named logical displays.
 pub fn set_brightness_except(percent: u8, excluded: &[String]) -> bool {
-    let percent = percent.clamp(0, 100) as f64 / 100.0;
+    set_trimmed_brightness_except(percent, &BTreeMap::new(), excluded)
+}
+
+/// Brightness for one display: the shared value plus that display's trim.
+pub fn trimmed_percent(percent: u8, offsets: &BTreeMap<String, i16>, device_name: &str) -> u8 {
+    let offset = offsets
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(device_name))
+        .map(|(_, offset)| *offset)
+        .unwrap_or(0);
+    (percent as i16 + offset).clamp(0, 100) as u8
+}
+
+/// Set brightness on DDC/CI displays except the named logical displays, applying
+/// each display's trim on top of the shared percentage.
+pub fn set_trimmed_brightness_except(
+    percent: u8,
+    offsets: &BTreeMap<String, i16>,
+    excluded: &[String],
+) -> bool {
     let mut any_success = false;
 
     let monitors = MONITORS.lock().unwrap();
@@ -326,6 +346,7 @@ pub fn set_brightness_except(percent: u8, excluded: &[String]) -> bool {
             {
                 continue;
             }
+            let percent = trimmed_percent(percent, offsets, &m.info.device_name) as f64 / 100.0;
             let range = m.info.brightness_max.saturating_sub(m.info.brightness_min);
             let target = m.info.brightness_min + (range as f64 * percent).round() as u32;
             let ok = unsafe { SetMonitorBrightness(m.handle, target) };
@@ -393,7 +414,20 @@ pub fn cleanup() {
 
 #[cfg(test)]
 mod tests {
-    use super::normalized_display_names;
+    use super::{normalized_display_names, trimmed_percent};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn display_trim_matches_case_insensitively_and_clamps() {
+        let offsets = BTreeMap::from([
+            (r"\\.\DISPLAY1".to_string(), -30),
+            (r"\\.\DISPLAY2".to_string(), 25),
+        ]);
+        assert_eq!(trimmed_percent(50, &offsets, r"\\.\display1"), 20);
+        assert_eq!(trimmed_percent(20, &offsets, r"\\.\DISPLAY1"), 0);
+        assert_eq!(trimmed_percent(90, &offsets, r"\\.\DISPLAY2"), 100);
+        assert_eq!(trimmed_percent(50, &offsets, r"\\.\DISPLAY3"), 50);
+    }
 
     #[test]
     fn display_inventory_comparison_ignores_case_order_and_duplicates() {
