@@ -129,7 +129,9 @@ pub fn get_display_names() -> Vec<String> {
 }
 
 fn is_excluded(name: &str, excluded: &[String]) -> bool {
-    excluded.iter().any(|item| item.eq_ignore_ascii_case(name))
+    excluded
+        .iter()
+        .any(|item| crate::displays::matches(item, name))
 }
 
 /// Apply a gamma ramp to ALL active displays.

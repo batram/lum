@@ -140,6 +140,9 @@ fn normalized_display_names(names: &[String]) -> Vec<String> {
 /// Enumerate all physical monitors and probe DDC/CI capabilities.
 /// Results are cached until the active logical display set changes.
 pub fn enumerate_monitors(active_display_names: &[String]) -> Vec<MonitorInfo> {
+    // Logical names may now belong to different monitors; settings keys are
+    // resolved through these identities.
+    crate::displays::refresh();
     let mut hmonitors: Vec<*mut c_void> = Vec::new();
 
     // Collect HMONITOR handles
@@ -321,7 +324,7 @@ pub fn set_brightness_except(percent: u8, excluded: &[String]) -> bool {
 pub fn trimmed_percent(percent: u8, offsets: &BTreeMap<String, i16>, device_name: &str) -> u8 {
     let offset = offsets
         .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(device_name))
+        .find(|(key, _)| crate::displays::matches(key, device_name))
         .map(|(_, offset)| *offset)
         .unwrap_or(0);
     (percent as i16 + offset).clamp(0, 100) as u8
@@ -342,7 +345,7 @@ pub fn set_trimmed_brightness_except(
             if !m.info.supports_brightness
                 || excluded
                     .iter()
-                    .any(|item| item.eq_ignore_ascii_case(&m.info.device_name))
+                    .any(|item| crate::displays::matches(item, &m.info.device_name))
             {
                 continue;
             }
@@ -375,7 +378,7 @@ pub fn set_brightness_for_displays(percent: u8, included: &[String]) -> bool {
             if !monitor.info.supports_brightness
                 || !included
                     .iter()
-                    .any(|item| item.eq_ignore_ascii_case(&monitor.info.device_name))
+                    .any(|item| crate::displays::matches(item, &monitor.info.device_name))
             {
                 continue;
             }

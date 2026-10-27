@@ -182,13 +182,22 @@
   }
 
   function navigate(section) { active = section; }
-  function displayEffectsEnabled(deviceName) {
-    return !settings.disabled_displays.includes(deviceName);
+  // Settings are keyed by stable display id; older configs used the logical name.
+  function displayKeyMatches(key, monitor) {
+    const value = key.toLowerCase();
+    return value === monitor.id.toLowerCase() || value === monitor.device_name.toLowerCase();
   }
-  function setDisplayEffectsEnabled(deviceName, enabled) {
-    settings.disabled_displays = enabled
-      ? settings.disabled_displays.filter((name) => name !== deviceName)
-      : [...new Set([...settings.disabled_displays, deviceName])];
+  function displayTitle(monitor) {
+    const number = /DISPLAY(\d+)$/i.exec(monitor.device_name)?.[1] ?? monitor.index + 1;
+    const name = monitor.name || monitor.description;
+    return name && name !== monitor.device_name ? `Display ${number}: ${name}` : `Display ${number}`;
+  }
+  function displayEffectsEnabled(monitor) {
+    return !settings.disabled_displays.some((key) => displayKeyMatches(key, monitor));
+  }
+  function setDisplayEffectsEnabled(monitor, enabled) {
+    const others = settings.disabled_displays.filter((key) => !displayKeyMatches(key, monitor));
+    settings.disabled_displays = enabled ? others : [...others, monitor.id];
   }
   async function refreshDisplayList() {
     if (isRefreshingMonitors) return;
@@ -257,7 +266,7 @@
             </button>
           </div>
           {#each monitors as monitor}
-            <label class="toggle-row"><span><strong>{monitor.description || monitor.device_name}</strong><small>{monitor.supports_brightness ? "Color, overlay, and hardware brightness effects" : "Color and overlay effects"} · {monitor.device_name}</small></span><input type="checkbox" checked={displayEffectsEnabled(monitor.device_name)} onchange={(event) => setDisplayEffectsEnabled(monitor.device_name, event.currentTarget.checked)} /></label>
+            <label class="toggle-row"><span><strong>{displayTitle(monitor)}{#if monitor.serial}<span class="display-meta">({monitor.serial})</span>{/if}</strong><small>{monitor.supports_brightness ? "Color, overlay, and hardware brightness effects" : "Color and overlay effects"}</small></span><input type="checkbox" checked={displayEffectsEnabled(monitor)} onchange={(event) => setDisplayEffectsEnabled(monitor, event.currentTarget.checked)} /></label>
           {:else}
             <p class="empty-copy">No active displays were detected.</p>
           {/each}
@@ -377,7 +386,7 @@
   .card { margin-top: 14px; padding: 20px; border: 1px solid #30333e; border-radius: 14px; background: #20222b; }
   .card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 19px; }.card-heading p { margin: 5px 0 0; color: #858b98; font-size: 12px; }
   .field-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:12px; }.field-grid > label { display:grid;gap:7px;color:#aeb3bf;font-size:11px; }.number-field { display:flex;align-items:center;border:1px solid #3a3e49;border-radius:9px;background:#1a1b22;overflow:hidden; }.number-field input { width:72px;padding:9px;border:0;background:transparent;color:white;outline:none; }.number-field em { color:#737987;font-size:10px;font-style:normal; }
-  .toggle-row { display:flex;align-items:center;justify-content:space-between;gap:20px;padding-top:17px;border-top:1px solid #2e313b; }.toggle-row > span { display:grid;gap:4px; }.toggle-row strong {font-size:12px}.toggle-row small{color:#858b98}.toggle-row input{width:38px;height:20px;accent-color:#6f9ce8}.rows{display:grid;gap:18px}.rows .toggle-row:first-child{padding-top:0;border-top:0}
+  .toggle-row { display:flex;align-items:center;justify-content:space-between;gap:20px;padding-top:17px;border-top:1px solid #2e313b; }.toggle-row > span { display:grid;gap:4px; }.toggle-row strong {font-size:12px}.toggle-row small{color:#858b98}.toggle-row .display-meta{margin-left:8px;color:#858b98;font-weight:400}.toggle-row input{width:38px;height:20px;accent-color:#6f9ce8}.rows{display:grid;gap:18px}.rows .toggle-row:first-child{padding-top:0;border-top:0}
   .select-row{display:flex;align-items:center;justify-content:space-between;gap:28px;margin-bottom:17px}.select-row>span{display:grid;gap:4px;max-width:470px}.select-row strong{font-size:12px}.select-row small{color:#858b98;font-size:11px;line-height:1.45}.select-row select{min-width:250px;padding:9px 34px 9px 11px;border:1px solid #3a3e49;border-radius:9px;background:#191a21;color:#eef0f5;outline:none;font-size:11px}.select-row select:focus{border-color:#6c93d2;box-shadow:0 0 0 3px rgba(108,147,210,.12)}
   .gamma-floor-row{margin:17px 0 0;padding-top:17px;border-top:1px solid #2e313b}.gamma-floor-row .number-field{position:relative;flex:0 0 auto}.gamma-floor-row .number-field input{width:82px;padding-right:29px;text-align:right;appearance:textfield}.gamma-floor-row .number-field input::-webkit-inner-spin-button,.gamma-floor-row .number-field input::-webkit-outer-spin-button{margin:0;appearance:none}.gamma-floor-row .number-field em{position:absolute;top:50%;right:11px;pointer-events:none;transform:translateY(-50%)}
   .empty{display:grid;justify-items:center;padding:30px 20px;color:#818795;text-align:center}.empty strong{margin-top:8px;color:#c4c8d0}.empty p{max-width:430px;margin:6px 0 0;font-size:11px}.empty.compact{padding:24px}.add-app{display:flex;gap:8px}.add-app input{flex:1;padding:10px 12px;border:1px solid #393d48;border-radius:9px;background:#191a21;color:white;outline:none}.add-app input:focus{border-color:#6c93d2}.add-app button,.secondary{padding:9px 13px;border:1px solid #424653;border-radius:9px;background:#2b2e38;cursor:pointer;font-size:11px}.inline-error{color:#ffaaa3;font-size:11px}.app-list{margin-top:13px}.app-list>div:not(.empty){display:flex;align-items:center;gap:11px;padding:12px 2px;border-top:1px solid #2e313b}.app-list strong{font-size:12px}.app-list button{margin-left:auto;border:0;background:transparent;color:#d78d89;cursor:pointer;font-size:11px}.app-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:#2b2e38;color:#959ba8}

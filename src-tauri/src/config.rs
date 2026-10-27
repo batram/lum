@@ -1,3 +1,4 @@
+use crate::displays::DisplayIdentity;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -27,12 +28,14 @@ pub struct Settings {
     /// Brightness configuration.
     pub brightness: BrightnessConfig,
 
-    /// Windows display device names that Lum must leave untouched.
+    /// Displays Lum must leave untouched, by stable display id (see `displays.rs`).
+    /// Older configs used logical names like `\\.\DISPLAY1`; those still match
+    /// and are rewritten to ids once the display is seen connected.
     #[serde(default)]
     pub disabled_displays: Vec<String>,
 
     /// Per-display hardware brightness trims, in percentage points relative to
-    /// the scheduled/adjusted monitor brightness. Keyed by Windows device name.
+    /// the scheduled/adjusted monitor brightness. Keyed like `disabled_displays`.
     #[serde(default)]
     pub display_brightness_offsets: BTreeMap<String, i16>,
 
@@ -377,5 +380,28 @@ impl Settings {
             }
             Err(e) => eprintln!("[lum] Failed to serialize settings: {e}"),
         }
+    }
+
+    /// Rewrite per-display keys that are still logical display names to the
+    /// stable id of the monitor currently using that name. Returns whether
+    /// anything changed.
+    pub fn adopt_stable_display_ids(&mut self, identities: &[DisplayIdentity]) -> bool {
+        let mut disabled: Vec<String> = Vec::new();
+        for key in &self.disabled_displays {
+            let key = crate::displays::stable_key(key, identities);
+            if !disabled.iter().any(|existing| existing.eq_ignore_ascii_case(&key)) {
+                disabled.push(key);
+            }
+        }
+        let offsets: BTreeMap<String, i16> = self
+            .display_brightness_offsets
+            .iter()
+            .map(|(key, offset)| (crate::displays::stable_key(key, identities), *offset))
+            .collect();
+        let changed =
+            disabled != self.disabled_displays || offsets != self.display_brightness_offsets;
+        self.disabled_displays = disabled;
+        self.display_brightness_offsets = offsets;
+        changed
     }
 }

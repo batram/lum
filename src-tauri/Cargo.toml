@@ -28,6 +28,7 @@ dirs = "6"
 [dependencies.windows]
 version = "0.61"
 features = [
+  "Win32_Devices_Display",
   "Win32_Globalization",
   "Win32_Graphics_Gdi",
   "Win32_System_Registry",

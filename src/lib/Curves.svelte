@@ -307,7 +307,7 @@
   </svg>
 
   <div class="legend"><span><i class="hardware"></i>Hardware</span><span><i class="overlay"></i>Overlay</span><span><i class="temperature"></i>Temperature</span><span class="hint">Drag curves vertically · drag empty chart space to preview time</span></div>
-  <details class="monitor-status"><summary><strong>{capableMonitors.length} of {monitors.length} displays</strong> support hardware brightness</summary><div>{#each monitors as monitor}<span><b>{monitor.description || `Display ${monitor.index + 1}`}</b><em class:supported={monitor.supports_brightness}>{monitor.supports_brightness ? "DDC/CI hardware + overlay" : "Overlay only"}</em></span>{:else}<p>No displays were reported. Overlay and temperature control remain available.</p>{/each}</div></details>
+  <details class="monitor-status"><summary><strong>{capableMonitors.length} of {monitors.length} displays</strong> support hardware brightness</summary><div>{#each monitors as monitor}<span><b>{monitor.name || monitor.description || `Display ${monitor.index + 1}`}</b><em class:supported={monitor.supports_brightness}>{monitor.supports_brightness ? "DDC/CI hardware + overlay" : "Overlay only"}</em></span>{:else}<p>No displays were reported. Overlay and temperature control remain available.</p>{/each}</div></details>
 </section>
 
 <style>

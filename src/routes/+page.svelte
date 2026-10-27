@@ -300,8 +300,7 @@
   async function loadDisplays() {
     try {
       const [monitors, settings] = await Promise.all([invoke("get_monitors"), invoke("get_settings")]);
-      const disabled = settings.disabled_displays.map((name) => name.toLowerCase());
-      const next = monitors.filter((monitor) => monitor.supports_brightness && !disabled.includes(monitor.device_name.toLowerCase()));
+      const next = monitors.filter((monitor) => monitor.supports_brightness && !settings.disabled_displays.some((key) => keyMatches(key, monitor)));
       if (JSON.stringify(next) !== JSON.stringify(displays)) displays = next;
       if (displays.length < 2) displaysExpanded = false;
     } catch {
@@ -309,13 +308,19 @@
     }
   }
 
-  function offsetFor(deviceName) {
-    const key = Object.keys(displayOffsets).find((name) => name.toLowerCase() === deviceName.toLowerCase());
+  // Settings are keyed by stable display id; older configs used the logical name.
+  function keyMatches(key, display) {
+    const value = key.toLowerCase();
+    return value === display.id.toLowerCase() || value === display.device_name.toLowerCase();
+  }
+
+  function offsetFor(display) {
+    const key = Object.keys(displayOffsets).find((name) => keyMatches(name, display));
     return key ? displayOffsets[key] : 0;
   }
 
-  function displayBrightness(deviceName) {
-    return Math.max(0, Math.min(100, Number(hardwareBrightness) + offsetFor(deviceName)));
+  function displayBrightness(display) {
+    return Math.max(0, Math.min(100, Number(hardwareBrightness) + offsetFor(display)));
   }
 
   function shortDeviceName(deviceName) {
@@ -324,21 +329,21 @@
 
   // Each display stores a trim relative to the shared Monitor slider, so the
   // schedule keeps fading all of them while their balance stays the same.
-  function setDisplayOffset(deviceName, offset, persist) {
+  function setDisplayOffset(display, offset, persist) {
     const offsetPct = Math.max(-100, Math.min(100, Math.round(offset)));
-    const others = Object.entries(displayOffsets).filter(([name]) => name.toLowerCase() !== deviceName.toLowerCase());
-    displayOffsets = Object.fromEntries(offsetPct === 0 ? others : [...others, [deviceName, offsetPct]]);
+    const others = Object.entries(displayOffsets).filter(([name]) => !keyMatches(name, display));
+    displayOffsets = Object.fromEntries(offsetPct === 0 ? others : [...others, [display.id, offsetPct]]);
     const busy = (trimBusy = {});
     clearTimeout(trimTimer);
-    const send = () => invoke("set_display_brightness_offset", { deviceName, offsetPct, persist })
+    const send = () => invoke("set_display_brightness_offset", { display: display.id, offsetPct, persist })
       .catch((reason) => { error = `Could not set display brightness: ${reason}`; })
       .finally(() => { if (trimBusy === busy) trimBusy = null; });
     if (persist) send();
     else trimTimer = setTimeout(send, 60);
   }
 
-  function trimInput(deviceName, event, persist) {
-    setDisplayOffset(deviceName, Number(event.currentTarget.value) - Number(hardwareBrightness), persist);
+  function trimInput(display, event, persist) {
+    setDisplayOffset(display, Number(event.currentTarget.value) - Number(hardwareBrightness), persist);
   }
 
   function formatOffset(offset) {
@@ -405,20 +410,20 @@
     </div>
     {#if displaysExpanded}
       <div id="display-list" class="display-list" role="group" aria-label="Per-display brightness" bind:offsetHeight={displayListHeight}>
-        {#each displays as display (display.device_name)}
-          {@const offset = offsetFor(display.device_name)}
-          {@const value = displayBrightness(display.device_name)}
+        {#each displays as display (display.id)}
+          {@const offset = offsetFor(display)}
+          {@const value = displayBrightness(display)}
           <div class="display-row">
             <span class="label-row">
-              <span class="display-name" title={`${display.description} · ${display.device_name}`}>{display.description}<small>{shortDeviceName(display.device_name)}</small></span>
+              <span class="display-name" title={`${display.name} · ${display.device_name}${display.serial ? ` · S/N ${display.serial}` : ""}`}>{display.name}<small>{shortDeviceName(display.device_name)}</small></span>
               <span class="display-value">
                 {#if offset !== 0}
-                  <button type="button" class="trim-chip" title="Match the Monitor slider again" aria-label={`Clear ${formatOffset(offset)} trim for ${display.description}`} onclick={() => setDisplayOffset(display.device_name, 0, true)}>{formatOffset(offset)}</button>
+                  <button type="button" class="trim-chip" title="Match the Monitor slider again" aria-label={`Clear ${formatOffset(offset)} trim for ${display.name}`} onclick={() => setDisplayOffset(display, 0, true)}>{formatOffset(offset)}</button>
                 {/if}
                 <output>{value}%</output>
               </span>
             </span>
-            <input style={`--value:${value}%`} class="trim" aria-label={`Brightness for ${display.description} (${shortDeviceName(display.device_name)})`} type="range" min="0" max="100" step="1" {value} oninput={(event) => trimInput(display.device_name, event, false)} onchange={(event) => trimInput(display.device_name, event, true)} disabled={!loaded || state.effects_off || persisting} />
+            <input style={`--value:${value}%`} class="trim" aria-label={`Brightness for ${display.name} (${shortDeviceName(display.device_name)})`} type="range" min="0" max="100" step="1" {value} oninput={(event) => trimInput(display, event, false)} onchange={(event) => trimInput(display, event, true)} disabled={!loaded || state.effects_off || persisting} />
           </div>
         {/each}
       </div>

@@ -4,6 +4,7 @@ use crate::appdetect;
 use crate::color::{kelvin_to_rgb, lerp_kelvin};
 use crate::config::Settings;
 use crate::ddcci;
+use crate::displays;
 use crate::gamma::{self, GammaRamps};
 use crate::{sun, theme};
 use chrono::{Duration as ChronoDuration, Local, NaiveDateTime, NaiveTime, Timelike};
@@ -150,19 +151,32 @@ impl FadeEngine {
         self.state.lock().unwrap().display_brightness_offsets = offsets;
     }
 
-    /// Change one display's trim and apply it to the hardware right away.
-    /// Gamma is untouched, so this stays cheap enough for slider drags.
-    pub fn set_display_offset(&self, device_name: &str, offset_pct: i16) {
+    /// Rewrite settings keys that still name a logical display (`\\.\DISPLAY1`)
+    /// to that monitor's stable id. Returns whether settings were changed.
+    pub fn adopt_stable_display_ids(&self) -> bool {
+        let mut settings = Settings::load();
+        if !settings.adopt_stable_display_ids(&displays::identities()) {
+            return false;
+        }
+        settings.save();
+        self.set_display_offsets(settings.display_brightness_offsets);
+        true
+    }
+
+    /// Change one display's trim (keyed by stable display id) and apply it to
+    /// the hardware right away. Gamma is untouched, so this stays cheap enough
+    /// for slider drags.
+    pub fn set_display_offset(&self, display: &str, offset_pct: i16) {
         let offset_pct = offset_pct.clamp(-100, 100);
         let controls = {
             let mut controls = self.controls.lock().unwrap();
             controls
                 .display_offsets
-                .retain(|name, _| !name.eq_ignore_ascii_case(device_name));
+                .retain(|key, _| !key.eq_ignore_ascii_case(display));
             if offset_pct != 0 {
                 controls
                     .display_offsets
-                    .insert(device_name.to_string(), offset_pct);
+                    .insert(display.to_string(), offset_pct);
             }
             controls.clone()
         };
@@ -411,6 +425,11 @@ impl FadeEngine {
                         last_monitor_refresh = Instant::now();
                     }
                     changed
+                };
+                let settings = if display_inventory_changed && engine.adopt_stable_display_ids() {
+                    Settings::load()
+                } else {
+                    settings
                 };
                 if display_inventory_changed && !settings.disabled_displays.is_empty() {
                     ddcci::set_brightness_for_displays(

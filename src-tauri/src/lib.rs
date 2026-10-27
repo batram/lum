@@ -3,6 +3,7 @@ mod autostart;
 mod color;
 mod config;
 mod ddcci;
+mod displays;
 mod engine;
 mod gamma;
 mod hotkeys;
@@ -60,17 +61,18 @@ fn reset_temporary_adjustments(engine: State<'_, Arc<FadeEngine>>) {
     engine.reset_adjustments();
 }
 
-/// Set one display's brightness trim. Slider drags apply it live; `persist`
-/// (sent on release) also writes it to settings and notifies the settings window.
+/// Set one display's brightness trim, keyed by stable display id. Slider drags
+/// apply it live; `persist` (sent on release) also writes it to settings and
+/// notifies the settings window.
 #[tauri::command]
 fn set_display_brightness_offset(
     app: AppHandle,
     engine: State<'_, Arc<FadeEngine>>,
-    device_name: String,
+    display: String,
     offset_pct: i16,
     persist: bool,
 ) {
-    engine.set_display_offset(&device_name, offset_pct);
+    engine.set_display_offset(&display, offset_pct);
     if persist {
         let mut settings = config::Settings::load();
         settings.display_brightness_offsets = engine.display_offsets();
@@ -226,7 +228,10 @@ fn get_foreground_app() -> Option<String> {
 }
 
 /// Tauri command: get list of monitors with DDC/CI capabilities.
+/// `id` is the stable key for per-display settings; `name` is the EDID model
+/// name, falling back to the driver description.
 fn build_monitor_list(physical: &[ddcci::MonitorInfo]) -> Vec<serde_json::Value> {
+    let identities = displays::identities();
     gamma::get_display_names()
         .into_iter()
         .enumerate()
@@ -240,9 +245,19 @@ fn build_monitor_list(physical: &[ddcci::MonitorInfo]) -> Vec<serde_json::Value>
                 .find(|monitor| !monitor.description.is_empty())
                 .map(|monitor| monitor.description.as_str())
                 .unwrap_or(&device_name);
+            let identity = identities
+                .iter()
+                .find(|identity| identity.device_name.eq_ignore_ascii_case(&device_name));
+            let name = identity
+                .map(|identity| identity.name.as_str())
+                .filter(|name| !name.is_empty())
+                .unwrap_or(description);
             serde_json::json!({
                 "index": index,
+                "id": identity.map_or(device_name.as_str(), |identity| identity.id.as_str()),
                 "device_name": device_name,
+                "name": name,
+                "serial": identity.map_or("", |identity| identity.serial.as_str()),
                 "description": description,
                 "supports_brightness": matches.iter().any(|monitor| monitor.supports_brightness),
                 "supports_contrast": matches.iter().any(|monitor| monitor.supports_contrast),
@@ -259,8 +274,9 @@ fn get_monitors() -> Vec<serde_json::Value> {
 
 /// Tauri command: force a monitor re-enumeration and return updated capabilities.
 #[tauri::command]
-fn refresh_monitors() -> Vec<serde_json::Value> {
+fn refresh_monitors(engine: State<'_, Arc<FadeEngine>>) -> Vec<serde_json::Value> {
     let physical = ddcci::enumerate_monitors(&gamma::get_display_names());
+    engine.adopt_stable_display_ids();
     build_monitor_list(&physical)
 }
 
@@ -350,6 +366,7 @@ pub fn run() {
             // Enumerate DDC/CI monitors before the first engine tick so display
             // exclusions can restore hardware brightness immediately.
             ddcci::enumerate_monitors(&gamma::get_display_names());
+            fade_engine.adopt_stable_display_ids();
 
             // Start the fade engine tick loop
             let engine_handle = Arc::new(Mutex::new(Some(fade_engine.start())));
